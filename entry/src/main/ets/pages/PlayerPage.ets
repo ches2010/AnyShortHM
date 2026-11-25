@@ -247,11 +247,6 @@ struct PlayerPage {
           } else if (state === 'prepared') {
             this.clearStartTimer();
             this.duration = p.duration;
-            if (p.videoWidth > 0 && p.videoHeight > 0) {
-              this.videoW = p.videoWidth;
-              this.videoH = p.videoHeight;
-              this.calcVideoSize();
-            }
             if (this.pendingSeekMs > 1000) {
               ignore(p.seek(this.pendingSeekMs));
               this.pendingSeekMs = 0;
