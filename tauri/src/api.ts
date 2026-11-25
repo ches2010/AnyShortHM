@@ -1,4 +1,4 @@
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
+import { request } from './http';
 import { i18nState } from './i18n';
 import { appState, setUser } from './store';
 
@@ -90,7 +90,7 @@ async function handshake(): Promise<string> {
   const dev = appState.deviceId;
   const body: Record<string, string> = { platform: 'web' };
   if (dev) body.device_id = dev;
-  const res = await tauriFetch(API_BASE + '/auth/session', {
+  const res = await request(API_BASE + '/auth/session', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body)
@@ -123,7 +123,7 @@ async function req<T>(path: string, method = 'GET', body?: unknown): Promise<T> 
   await ensureSession();
   const headers: Record<string, string> = { authorization: 'Bearer ' + token };
   if (body !== undefined) headers['content-type'] = 'application/json';
-  let res = await tauriFetch(API_BASE + path, {
+  let res = await request(API_BASE + path, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined
@@ -131,7 +131,7 @@ async function req<T>(path: string, method = 'GET', body?: unknown): Promise<T> 
   if (res.status === 401) {
     token = '';
     await ensureSession();
-    res = await tauriFetch(API_BASE + path, {
+    res = await request(API_BASE + path, {
       method,
       headers: { authorization: 'Bearer ' + token, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined

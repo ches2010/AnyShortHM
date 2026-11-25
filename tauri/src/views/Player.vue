@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
+import { getText, isTauri } from '../http';
 import { api, type PlayData, type EpisodeItem } from '../api';
 import { t } from '../i18n';
 import { route, back, goPlayer } from '../router';
@@ -99,10 +99,10 @@ async function loadSubs(): Promise<void> {
     const tracks = await api.subtitles(episodeId.value);
     const url = tracks.map((x) => x.url || x.vtt_url || x.file || '').find((u) => !!u);
     if (!url) return;
-    const res = await tauriFetch(url, { method: 'GET' });
-    const text = await res.text();
+    const text = await getText(url);
     cues = parseVtt(text);
-  } catch {
+  } catch (e) {
+    if (!isTauri()) console.warn('[player] subtitle fetch failed (likely CORS):', e);
     cues = [];
   }
 }
