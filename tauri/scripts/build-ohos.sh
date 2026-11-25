@@ -137,11 +137,13 @@ if [ "$BUILD_MODE" = "tauri" ]; then
   fi
 else
   OHOS_DIR="${OHOS_PROJECT_DIR:-$ROOT/../ohos-shell}"
+  # 相对路径转绝对路径（OHOS_PROJECT_DIR 允许传相对路径）
+  if [ -d "$OHOS_DIR" ]; then OHOS_DIR="$(cd "$OHOS_DIR" && pwd)"; fi
   if [ ! -d "$OHOS_DIR" ]; then
     die "找不到鸿蒙壳工程: $OHOS_DIR
   两种做法:
    1) 装 tauri-cli(feat/open-harmony) 并用 BUILD_MODE=tauri, 由 cargo tauri ohos init 生成;
-   2) 把仓库根目录的 ArkTS 工程作为壳: OHOS_PROJECT_DIR=\$PWD/.. (需含 AppScope, build-profile.json5, entry/)
+   2) 把仓库根目录的 ArkTS 工程作为壳: 设 OHOS_PROJECT_DIR 为仓库根目录绝对路径 (需含 AppScope, build-profile.json5, entry/)
   壳工程只负责承载 WebView 与 rawfile, 前端产物由本脚本注入。"
   fi
 fi
