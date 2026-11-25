@@ -14,7 +14,7 @@ struct PlayerPage {
   @State loading: boolean = true;
   @State errMsg: string = '';
   @State playing: boolean = false;
-  @State position: number = 0;
+  @State posMs: number = 0;
   @State duration: number = 0;
   @State muted: boolean = false;
   @State landscape: boolean = false;
@@ -69,8 +69,8 @@ struct PlayerPage {
   }
 
   private persistProgress(): void {
-    if (this.titleId > 0 && this.position > 3000) {
-      saveLocalProgress(this.titleId, this.currentEpNo, this.position);
+    if (this.titleId > 0 && this.posMs > 3000) {
+      saveLocalProgress(this.titleId, this.currentEpNo, this.posMs);
     }
   }
 
@@ -115,15 +115,15 @@ struct PlayerPage {
         p.on('stateChange', (state: string) => {
           if (state === 'initialized') {
             p.surfaceId = this.xcController.getXComponentSurfaceId();
-            p.prepare().catch((e: Error) => {});
+            ignore(p.prepare());
           } else if (state === 'prepared') {
             this.duration = p.duration;
             if (this.resumePosMs > 5000 && this.resumePosMs < p.duration - 5000) {
-              p.seek(this.resumePosMs).catch((e: Error) => {});
+              ignore(p.seek(this.resumePosMs));
               promptAction.showToast({ message: t('continue_watch'), duration: 1500 });
             }
             this.resumePosMs = 0;
-            p.play().catch((e: Error) => {});
+            ignore(p.play());
           } else if (state === 'playing') {
             this.playing = true;
           } else if (state === 'paused') {
@@ -135,7 +135,7 @@ struct PlayerPage {
         });
         p.on('timeUpdate', (time: number) => {
           if (!this.dragging) {
-            this.position = time;
+            this.posMs = time;
           }
           this.updateCue(time);
           if (!this.reported && time > 10000) {
@@ -158,7 +158,7 @@ struct PlayerPage {
     if (this.avPlayer !== null) {
       const p = this.avPlayer;
       this.avPlayer = null;
-      p.release().catch((e: Error) => {});
+      ignore(p.release());
     }
   }
 
@@ -167,22 +167,22 @@ struct PlayerPage {
       return;
     }
     if (this.playing) {
-      this.avPlayer.pause().catch((e: Error) => {});
+      ignore(this.avPlayer.pause());
     } else {
-      this.avPlayer.play().catch((e: Error) => {});
+      ignore(this.avPlayer.play());
     }
   }
 
   private seekTo(ms: number): void {
     if (this.avPlayer !== null) {
-      this.avPlayer.seek(ms).catch((e: Error) => {});
+      ignore(this.avPlayer.seek(ms));
     }
   }
 
   private toggleMute(): void {
     this.muted = !this.muted;
     if (this.avPlayer !== null) {
-      this.avPlayer.setVolume(this.muted ? 0 : 1).catch((e: Error) => {});
+      ignore(this.avPlayer.setVolume(this.muted ? 0 : 1));
     }
   }
 
@@ -208,7 +208,7 @@ struct PlayerPage {
     this.reported = false;
     this.cues = [];
     this.currentCue = '';
-    this.position = 0;
+    this.posMs = 0;
     this.duration = 0;
     this.showEpPanel = false;
     this.loadPlay();
@@ -349,7 +349,7 @@ struct PlayerPage {
         // 底部控制条
         Column() {
           Slider({
-            value: Math.min(this.position, this.duration > 0 ? this.duration : 1),
+            value: Math.min(this.posMs, this.duration > 0 ? this.duration : 1),
             min: 0,
             max: this.duration > 0 ? this.duration : 1,
             step: 500
@@ -366,7 +366,7 @@ struct PlayerPage {
               }
             })
           Row() {
-            Text(fmtTime(this.position)).fontSize(10).fontColor(Theme.TEXT_DIM)
+            Text(fmtTime(this.posMs)).fontSize(10).fontColor(Theme.TEXT_DIM)
             Blank()
             Text(fmtTime(this.duration)).fontSize(10).fontColor(Theme.TEXT_DIM)
           }
@@ -512,4 +512,11 @@ function vttTimeToMs(s: string): number {
     return 0;
   }
   return Number(m[1]) * 3600000 + Number(m[2]) * 60000 + Number(m[3]) * 1000 + Number(m[4]);
+}
+
+// 兼容 void / Promise 返回的 AVPlayer 调用：有 Promise 则吞掉 rejection
+function ignore(p: Promise<void> | void): void {
+  if (p) {
+    (p as Promise<void>).catch(() => {});
+  }
 }
