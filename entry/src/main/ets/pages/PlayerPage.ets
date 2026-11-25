@@ -1,7 +1,10 @@
 import { router, promptAction, window } from '@kit.ArkUI';
-import { media } from '@kit.MediaKit';
 import { http } from '@kit.NetworkKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { IjkMediaPlayer, VideoCodecMode } from '@ohos/ijkplayer';
+import type {
+  OnPreparedListener, OnVideoSizeChangedListener, OnCompletionListener,
+  OnErrorListener, OnBufferingUpdateListener
+} from '@ohos/ijkplayer';
 import { PlayData, EpisodeItem, SubtitleTrack, SubCue } from '../model/Models';
 import { ApiService } from '../net/ApiService';
 import { currentLang, t } from '../i18n/L10n';
@@ -12,6 +15,8 @@ import { fmtTime } from '../ui/Utils';
 const SPEEDS: number[] = [1.0, 1.25, 1.5, 2.0];
 const ICON_BTN: number = 42;
 const ICON_GLYPH: number = 24;
+const XC_ID: string = 'as_player_surface';
+const XC_LIB: string = 'ijkplayer_napi';
 
 @Entry
 @Component
@@ -22,8 +27,8 @@ struct PlayerPage {
   @State posMs: number = 0;
   @State duration: number = 0;
   @State muted: boolean = false;
-  @State landscape: boolean = false;   // 横屏旋转（横屏视频）
-  @State immersive: boolean = false;   // 竖屏沉浸式全屏（竖屏视频）
+  @State landscape: boolean = false;
+  @State immersive: boolean = false;
   @State currentEpNo: number = 1;
   @State currentEpId: number = 0;
   @State showEpPanel: boolean = false;
@@ -42,7 +47,8 @@ struct PlayerPage {
   @State qualities: string[] = [];
   @State curQuality: string = '';
 
-  private avPlayer: media.AVPlayer | null = null;
+  private ijk: IjkMediaPlayer | null = null;
+  private napiCtx: object | null = null;
   private xcController: XComponentController = new XComponentController();
   private surfaceReady: boolean = false;
   private pendingUrl: string = '';
@@ -57,6 +63,7 @@ struct PlayerPage {
   private resumePosMs: number = 0;
   private pendingSeekMs: number = 0;
   private startTimer: number = -1;
+  private tickTimer: number = -1;
   private qualityUrls: Map<string, string> = new Map<string, string>();
 
   aboutToAppear(): void {
@@ -78,12 +85,14 @@ struct PlayerPage {
 
   onPageHide(): void {
     this.clearStartTimer();
+    this.stopTick();
     this.persistProgress();
     this.exitFull();
   }
 
   aboutToDisappear(): void {
     this.clearStartTimer();
+    this.stopTick();
     this.persistProgress();
     this.releasePlayer();
   }
@@ -126,7 +135,6 @@ struct PlayerPage {
     return this.landscape || this.immersive;
   }
 
-  /** 全屏：竖屏视频 -> 沉浸式（不旋转）；横屏视频 -> 旋转横屏 */
   private toggleFullscreen(): void {
     if (!this.isFull()) {
       this.hideBars();
@@ -176,7 +184,7 @@ struct PlayerPage {
     }
   }
 
-  // ---------- 播放数据 ----------
+  // ---------- 数据 ----------
 
   private persistProgress(): void {
     if (this.titleId > 0 && this.posMs > 3000) {
@@ -246,15 +254,20 @@ struct PlayerPage {
       return;
     }
     const url: string = this.candidates[this.candIndex];
-    if (!this.surfaceReady) {
+    if (!this.surfaceReady || this.napiCtx === null) {
       this.pendingUrl = url;
       return;
     }
     this.startPlayer(url);
   }
 
+  /** 使用 IJK 内核播放 */
   private startPlayer(url: string): void {
     this.releasePlayer();
+    if (this.napiCtx === null) {
+      this.pendingUrl = url;
+      return;
+    }
     this.errMsg = '';
     this.loading = true;
     if (this.pendingSeekMs <= 0) {
@@ -262,94 +275,132 @@ struct PlayerPage {
       this.posMs = 0;
       this.duration = 0;
     }
-    media.createAVPlayer()
-      .then((p: media.AVPlayer) => {
-        this.avPlayer = p;
-        p.on('stateChange', (state: string) => {
-          if (state === 'initialized') {
-            this.bindSurface(p);
-            ignore(p.prepare());
-          } else if (state === 'prepared') {
-            this.clearStartTimer();
-            this.duration = p.duration;
-            if (this.pendingSeekMs > 1000) {
-              ignore(p.seek(this.pendingSeekMs));
-              this.pendingSeekMs = 0;
-            } else if (this.resumePosMs > 5000 && this.resumePosMs < p.duration - 5000) {
-              ignore(p.seek(this.resumePosMs));
-              promptAction.showToast({ message: t('continue_watch'), duration: 1500 });
-              this.resumePosMs = 0;
-            }
-            ignore(p.play());
-            if (this.speed !== 1.0) {
-              ignore(p.setSpeed(this.speed));
-            }
-          } else if (state === 'playing') {
-            this.playing = true;
-            this.loading = false;
-          } else if (state === 'paused') {
-            this.playing = false;
-          } else if (state === 'completed') {
-            this.playing = false;
-            this.autoNext();
+    try {
+      const p: IjkMediaPlayer = new IjkMediaPlayer();
+      this.ijk = p;
+      p.setContext(this.napiCtx, XC_ID);
+      p.setDebug(false);
+      p.native_setup(VideoCodecMode.SURFACE);
+      p.setDataSource(url);
+      p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, 'enable-accurate-seek', '1');
+      p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, 'framedrop', '5');
+      p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, 'max-buffer-size', '1048576');
+      p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, 'soundtouch', '1');
+      p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, 'timeout', '15000000');
+      p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, 'connect_timeout', '15000000');
+      if (this.muted) {
+        p.setVolume('0', '0');
+      } else {
+        p.setVolume('1', '1');
+      }
+
+      const onPrepared: OnPreparedListener = {
+        onPrepared: () => {
+          if (this.ijk !== p) {
+            return;
           }
-        });
-        p.on('videoSizeChange', (width: number, height: number) => {
+          this.clearStartTimer();
+          this.duration = p.getDuration();
+          this.loading = false;
+          if (this.pendingSeekMs > 1000) {
+            p.seekTo(String(Math.floor(this.pendingSeekMs)));
+            this.pendingSeekMs = 0;
+          } else if (this.resumePosMs > 5000 && this.resumePosMs < this.duration - 5000) {
+            p.seekTo(String(Math.floor(this.resumePosMs)));
+            promptAction.showToast({ message: t('continue_watch'), duration: 1500 });
+            this.resumePosMs = 0;
+          }
+          p.start();
+          if (this.speed !== 1.0) {
+            p.setSpeed(this.speed + 'f');
+          }
+          this.playing = true;
+          this.startTick();
+        }
+      };
+      p.setOnPreparedListener(onPrepared);
+
+      const onSize: OnVideoSizeChangedListener = {
+        onVideoSizeChanged: (width: number, height: number, sarNum: number, sarDen: number) => {
           if (width > 0 && height > 0) {
             this.videoW = width;
             this.videoH = height;
             this.calcVideoSize();
           }
-        });
-        p.on('timeUpdate', (time: number) => {
-          if (!this.dragging) {
-            this.posMs = time;
-          }
-          this.updateCue(time);
-          if (!this.reported && time > 10000) {
-            this.reported = true;
-            ApiService.saveProgress(this.currentEpId).catch((e: Error) => {});
-          }
-        });
-        p.on('error', (e: BusinessError) => {
+        }
+      };
+      p.setOnVideoSizeChangedListener(onSize);
+
+      const onDone: OnCompletionListener = {
+        onCompletion: () => {
+          this.playing = false;
+          this.stopTick();
+          this.autoNext();
+        }
+      };
+      p.setOnCompletionListener(onDone);
+
+      const onBuf: OnBufferingUpdateListener = {
+        onBufferingUpdate: (percent: number) => {
+        }
+      };
+      p.setOnBufferingUpdateListener(onBuf);
+
+      const onErr: OnErrorListener = {
+        onError: (what: number, extra: number) => {
           this.playing = false;
           this.loading = false;
           this.clearStartTimer();
-          const msg: string = e && e.message ? e.message : 'player error';
+          this.stopTick();
           if (this.candIndex + 1 < this.candidates.length) {
             this.candIndex++;
             this.startPlayer(this.candidates[this.candIndex]);
           } else {
-            this.errMsg = msg;
+            this.errMsg = 'IJK error what=' + what + ' extra=' + extra;
           }
-        });
-        try {
-          p.url = url;
-        } catch (e) {
-          this.loading = false;
-          this.errMsg = (e as Error).message;
-          return;
         }
-        this.armStartTimer();
-      })
-      .catch((e: Error) => {
-        this.loading = false;
-        this.errMsg = e.message;
-      });
+      };
+      p.setOnErrorListener(onErr);
+
+      p.setMessageListener();
+      p.prepareAsync();
+      this.armStartTimer();
+    } catch (e) {
+      this.loading = false;
+      this.errMsg = (e as Error).message;
+    }
   }
 
-  private bindSurface(p: media.AVPlayer): void {
-    const sid: string = this.xcController.getXComponentSurfaceId();
-    if (sid !== '') {
-      p.surfaceId = sid;
-      return;
-    }
-    setTimeout(() => {
-      const sid2: string = this.xcController.getXComponentSurfaceId();
-      if (sid2 !== '' && this.avPlayer === p) {
-        p.surfaceId = sid2;
+  private startTick(): void {
+    this.stopTick();
+    this.tickTimer = setInterval(() => {
+      if (this.ijk === null) {
+        return;
       }
-    }, 150);
+      const pos: number = this.ijk.getCurrentPosition();
+      if (!this.dragging && pos >= 0) {
+        this.posMs = pos;
+        this.updateCue(pos);
+        if (!this.reported && pos > 10000) {
+          this.reported = true;
+          ApiService.saveProgress(this.currentEpId).catch((e: Error) => {});
+        }
+      }
+      if (this.duration <= 0) {
+        const d: number = this.ijk.getDuration();
+        if (d > 0) {
+          this.duration = d;
+        }
+      }
+      this.playing = this.ijk.isPlaying();
+    }, 500);
+  }
+
+  private stopTick(): void {
+    if (this.tickTimer >= 0) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = -1;
+    }
   }
 
   private armStartTimer(): void {
@@ -358,7 +409,7 @@ struct PlayerPage {
       if (this.duration <= 0 && this.errMsg === '' && !this.playing) {
         this.nextCandidateOrFail();
       }
-    }, 12000);
+    }, 15000);
   }
 
   private clearStartTimer(): void {
@@ -380,35 +431,43 @@ struct PlayerPage {
   }
 
   private releasePlayer(): void {
-    if (this.avPlayer !== null) {
-      const p = this.avPlayer;
-      this.avPlayer = null;
-      ignore(p.release());
+    this.stopTick();
+    if (this.ijk !== null) {
+      const p = this.ijk;
+      this.ijk = null;
+      try {
+        p.release();
+      } catch (e) {
+        console.error('ijk release failed: ' + (e as Error).message);
+      }
     }
   }
 
   // ---------- 操作 ----------
 
   private togglePlay(): void {
-    if (this.avPlayer === null) {
+    if (this.ijk === null) {
       this.tryStart();
       return;
     }
     if (this.playing) {
-      ignore(this.avPlayer.pause());
+      this.ijk.pause();
+      this.playing = false;
     } else {
-      ignore(this.avPlayer.play());
+      this.ijk.start();
+      this.playing = true;
     }
   }
 
   private seekTo(ms: number): void {
-    if (this.avPlayer !== null) {
-      ignore(this.avPlayer.seek(ms));
+    if (this.ijk !== null && ms >= 0) {
+      this.ijk.seekTo(String(Math.floor(ms)));
+      this.posMs = ms;
     }
   }
 
   private seekBy(deltaMs: number): void {
-    if (this.avPlayer === null) {
+    if (this.ijk === null) {
       return;
     }
     let target: number = this.posMs + deltaMs;
@@ -418,7 +477,6 @@ struct PlayerPage {
     if (this.duration > 0 && target > this.duration) {
       target = this.duration;
     }
-    this.posMs = target;
     this.seekTo(target);
   }
 
@@ -432,15 +490,16 @@ struct PlayerPage {
     }
     idx = (idx + 1) % SPEEDS.length;
     this.speed = SPEEDS[idx];
-    if (this.avPlayer !== null) {
-      ignore(this.avPlayer.setSpeed(this.speed));
+    if (this.ijk !== null) {
+      this.ijk.setSpeed(this.speed + 'f');
     }
   }
 
   private toggleMute(): void {
     this.muted = !this.muted;
-    if (this.avPlayer !== null) {
-      ignore(this.avPlayer.setVolume(this.muted ? 0 : 1));
+    if (this.ijk !== null) {
+      const v: string = this.muted ? '0' : '1';
+      this.ijk.setVolume(v, v);
     }
   }
 
@@ -548,7 +607,7 @@ struct PlayerPage {
     }
   }
 
-  // ---------- 图标（42vp 按钮 / 24vp 图形） ----------
+  // ---------- 图标 ----------
 
   @Builder
   private iconSpeaker() {
@@ -748,12 +807,12 @@ struct PlayerPage {
 
   build() {
     Column() {
-      // 视频区
       Stack({ alignContent: Alignment.Center }) {
-        XComponent({ id: 'as_player_surface', type: 'surface', controller: this.xcController })
+        XComponent({ id: XC_ID, type: 'surface', libraryname: XC_LIB, controller: this.xcController })
           .width(this.viewW > 0 ? this.viewW + 'vp' : '100%')
           .height(this.viewH > 0 ? this.viewH + 'vp' : '100%')
-          .onLoad(() => {
+          .onLoad((ctx: object) => {
+            this.napiCtx = ctx;
             this.surfaceReady = true;
             if (this.pendingUrl !== '') {
               const u: string = this.pendingUrl;
@@ -845,7 +904,6 @@ struct PlayerPage {
         }
       })
 
-      // 剧集区（固定高度，保证可见）
       if (!this.isFull()) {
         Column() {
           Row() {
@@ -904,7 +962,6 @@ struct PlayerPage {
 
       Blank()
 
-      // 选集面板
       if (this.showEpPanel) {
         Column() {
           Column() {
@@ -951,7 +1008,6 @@ struct PlayerPage {
         .onClick(() => { this.showEpPanel = false; })
       }
 
-      // 清晰度面板
       if (this.showQuality) {
         Column() {
           Column() {
@@ -1019,16 +1075,6 @@ function buildCandidates(pd: PlayData): string[] {
     }
   }
   return out;
-}
-
-function ignore(p: Promise<void> | void): void {
-  try {
-    if (p) {
-      (p as Promise<void>).catch(() => {});
-    }
-  } catch (e) {
-    console.error('player call failed: ' + (e as Error).message);
-  }
 }
 
 function parseVtt(text: string): SubCue[] {
