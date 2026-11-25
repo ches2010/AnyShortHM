@@ -80,7 +80,27 @@ CI 调试中修复的问题（可供同类工程参考）：
    `preferences` 是默认导出、`?？{}` 空对象字面量需显式接口类型、AVPlayer 部分方法
    返回 void 不能链 `.catch`（改用 ignore() 兼容封装）。
 
-## 7. 风险与后续事项
+## 7. 运行时问题修复（真机反馈）
+
+**症状**：播放页黑屏，进度条 `00:00 / 00:00`，中央显示播放按钮，无任何错误提示。
+
+**根因**：`XComponent` 漏写 `.onLoad()` 回调 → `surfaceReady` 恒为 `false` →
+`loadPlay()` 拿到的流地址一直挂在 `pendingUrl`，`AVPlayer` 从未被创建
+（因此既无画面也无 error 事件，duration 恒为 0）。
+
+**修复**（entry/src/main/ets/pages/PlayerPage.ets）：
+1. 补 `XComponent.onLoad`，Surface 就绪后立即启动 pending 播放请求；
+2. `getXComponentSurfaceId()` 为空时延迟 150ms 重试绑定，避免早期空值；
+3. 多码流回退：候选列表按 h264 → 其他 mp4 排序，播放失败或超时自动换下一个源；
+4. 12 秒超时保护：未进入 prepared 则换源，全部失败时把原因显示到界面上
+   （不再一直黑屏），并提供「重试」；
+5. `player.url` 赋值包 try/catch；`ignore()` 兼容 void / Promise 两种返回并记录日志；
+6. 中央播放按钮由 emoji 字符改为 Circle + Path 矢量绘制；静音/全屏改为文字按钮
+   （新增 L10n 键：mute / unmute / fullscreen / exit_full / play_failed / player_fail）。
+
+验证：修复后 CI 构建通过（run #21，commit 4a256bd），产物 401,661 字节。
+
+## 8. 风险与后续事项
 
 1. ~~本工程未经 DevEco Studio 实际编译~~ → 已通过 CI 实际编译验证（见上节）；
    DevEco Studio 本地编译仍建议在真机验证播放与 OAuth 流程。
