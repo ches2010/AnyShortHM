@@ -43,7 +43,13 @@ const ZH: Record<string, string> = {
   'ongoing': '连载中',
   'views': '播放',
   'subtitle': '字幕',
-  'played_reported': '观看进度已同步'
+  'played_reported': '观看进度已同步',
+  'mute': '静音',
+  'unmute': '取消静音',
+  'fullscreen': '全屏',
+  'exit_full': '退出全屏',
+  'play_failed': '播放失败',
+  'player_fail': '视频加载失败（CDN 可能限制直链或当前网络不可达）'
 };
 
 const EN: Record<string, string> = {
@@ -82,7 +88,13 @@ const EN: Record<string, string> = {
   'ongoing': 'Ongoing',
   'views': 'views',
   'subtitle': 'Subtitles',
-  'played_reported': 'Progress synced'
+  'played_reported': 'Progress synced',
+  'mute': 'Mute',
+  'unmute': 'Unmute',
+  'fullscreen': 'Fullscreen',
+  'exit_full': 'Exit full',
+  'play_failed': 'Playback failed',
+  'player_fail': 'Failed to load video (CDN may block direct links or network unreachable)'
 };
 
 export function dict(): Record<string, string> {
