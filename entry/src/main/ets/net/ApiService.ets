@@ -8,7 +8,7 @@ import { apiGet, apiPost, apiPut, apiDelete } from './ApiClient';
 
 function dataOf(raw: string): object {
   const env = JSON.parse(raw) as Envelope;
-  return env.data ?? {};
+  return (env.data ?? {}) as object;
 }
 
 function arrayOf(raw: string): object[] {
