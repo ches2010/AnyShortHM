@@ -1,6 +1,7 @@
 import { router, promptAction, window } from '@kit.ArkUI';
 import { media } from '@kit.MediaKit';
 import { http } from '@kit.NetworkKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { PlayData, EpisodeItem, SubtitleTrack, SubCue } from '../model/Models';
 import { ApiService } from '../net/ApiService';
 import { currentLang, t } from '../i18n/L10n';
@@ -29,6 +30,8 @@ struct PlayerPage {
   private xcController: XComponentController = new XComponentController();
   private surfaceReady: boolean = false;
   private pendingUrl: string = '';
+  private candidates: string[] = [];
+  private candIndex: number = 0;
   private reported: boolean = false;
   private dragging: boolean = false;
   private titleId: number = 0;
@@ -36,6 +39,7 @@ struct PlayerPage {
   private slug: string = '';
   private cues: SubCue[] = [];
   private resumePosMs: number = 0;
+  private startTimer: number = -1;
 
   aboutToAppear(): void {
     const p = router.getParams() as Record<string, Object>;
@@ -54,16 +58,18 @@ struct PlayerPage {
   }
 
   onPageHide(): void {
+    this.clearStartTimer();
     this.persistProgress();
     if (this.landscape) {
       window.getLastWindow(appContext()).then((w: window.Window) => {
-        w.setPreferredOrientation(window.Orientation.PORTRAIT).catch((e: Error) => {});
+        ignore(w.setPreferredOrientation(window.Orientation.PORTRAIT));
       }).catch((e: Error) => {});
       this.landscape = false;
     }
   }
 
   aboutToDisappear(): void {
+    this.clearStartTimer();
     this.persistProgress();
     this.releasePlayer();
   }
@@ -88,17 +94,14 @@ struct PlayerPage {
     ApiService.play(this.currentEpId, currentLang(), '')
       .then((pd: PlayData) => {
         this.playData = pd;
+        this.candidates = buildCandidates(pd);
+        this.candIndex = 0;
         this.loading = false;
-        const url: string = pd.selected?.url ?? ((pd.streams !== undefined && pd.streams.length > 0) ? pd.streams[0].url : '');
-        if (url === '') {
-          this.errMsg = 'no stream url';
+        if (this.candidates.length === 0) {
+          this.errMsg = t('player_fail');
           return;
         }
-        if (this.surfaceReady) {
-          this.startPlayer(url);
-        } else {
-          this.pendingUrl = url;
-        }
+        this.tryStart();
         this.loadSubtitles();
       })
       .catch((e: Error) => {
@@ -107,16 +110,36 @@ struct PlayerPage {
       });
   }
 
+  private tryStart(): void {
+    if (this.candIndex >= this.candidates.length) {
+      this.loading = false;
+      this.errMsg = t('player_fail');
+      return;
+    }
+    const url: string = this.candidates[this.candIndex];
+    if (!this.surfaceReady) {
+      this.pendingUrl = url;
+      return;
+    }
+    this.startPlayer(url);
+  }
+
   private startPlayer(url: string): void {
     this.releasePlayer();
+    this.errMsg = '';
+    this.loading = true;
+    this.playing = false;
+    this.posMs = 0;
+    this.duration = 0;
     media.createAVPlayer()
       .then((p: media.AVPlayer) => {
         this.avPlayer = p;
         p.on('stateChange', (state: string) => {
           if (state === 'initialized') {
-            p.surfaceId = this.xcController.getXComponentSurfaceId();
+            this.bindSurface(p);
             ignore(p.prepare());
           } else if (state === 'prepared') {
+            this.clearStartTimer();
             this.duration = p.duration;
             if (this.resumePosMs > 5000 && this.resumePosMs < p.duration - 5000) {
               ignore(p.seek(this.resumePosMs));
@@ -126,6 +149,7 @@ struct PlayerPage {
             ignore(p.play());
           } else if (state === 'playing') {
             this.playing = true;
+            this.loading = false;
           } else if (state === 'paused') {
             this.playing = false;
           } else if (state === 'completed') {
@@ -143,15 +167,72 @@ struct PlayerPage {
             ApiService.saveProgress(this.currentEpId).catch((e: Error) => {});
           }
         });
-        p.on('error', (e: Error) => {
+        p.on('error', (e: BusinessError) => {
           this.playing = false;
-          this.errMsg = e.message;
+          this.loading = false;
+          this.clearStartTimer();
+          const msg: string = e && e.message ? e.message : 'player error';
+          if (this.candIndex + 1 < this.candidates.length) {
+            this.candIndex++;
+            this.startPlayer(this.candidates[this.candIndex]);
+          } else {
+            this.errMsg = msg;
+          }
         });
-        p.url = url;
+        try {
+          p.url = url;
+        } catch (e) {
+          this.loading = false;
+          this.errMsg = (e as Error).message;
+          return;
+        }
+        this.armStartTimer();
       })
       .catch((e: Error) => {
+        this.loading = false;
         this.errMsg = e.message;
       });
+  }
+
+  private bindSurface(p: media.AVPlayer): void {
+    const sid: string = this.xcController.getXComponentSurfaceId();
+    if (sid !== '') {
+      p.surfaceId = sid;
+      return;
+    }
+    setTimeout(() => {
+      const sid2: string = this.xcController.getXComponentSurfaceId();
+      if (sid2 !== '' && this.avPlayer === p) {
+        p.surfaceId = sid2;
+      }
+    }, 150);
+  }
+
+  private armStartTimer(): void {
+    this.clearStartTimer();
+    this.startTimer = setTimeout(() => {
+      if (this.duration <= 0 && this.errMsg === '' && !this.playing) {
+        this.nextCandidateOrFail();
+      }
+    }, 12000);
+  }
+
+  private clearStartTimer(): void {
+    if (this.startTimer >= 0) {
+      clearTimeout(this.startTimer);
+      this.startTimer = -1;
+    }
+  }
+
+  private nextCandidateOrFail(): void {
+    this.releasePlayer();
+    if (this.candIndex + 1 < this.candidates.length) {
+      this.candIndex++;
+      this.tryStart();
+    } else {
+      this.loading = false;
+      this.errMsg = t('player_fail');
+    }
   }
 
   private releasePlayer(): void {
@@ -164,6 +245,7 @@ struct PlayerPage {
 
   private togglePlay(): void {
     if (this.avPlayer === null) {
+      this.tryStart();
       return;
     }
     if (this.playing) {
@@ -284,11 +366,18 @@ struct PlayerPage {
 
   build() {
     Column() {
-      // 视频区
       Stack() {
         XComponent({ id: 'as_player_surface', type: 'surface', controller: this.xcController })
           .width('100%')
           .height('100%')
+          .onLoad(() => {
+            this.surfaceReady = true;
+            if (this.pendingUrl !== '') {
+              const u: string = this.pendingUrl;
+              this.pendingUrl = '';
+              this.startPlayer(u);
+            }
+          })
           .onClick(() => this.togglePlay())
 
         if (this.loading) {
@@ -297,15 +386,25 @@ struct PlayerPage {
 
         if (this.errMsg !== '') {
           Column() {
-            Text('播放失败').fontSize(14).fontColor(Theme.TEXT)
-            Text(this.errMsg).fontSize(11).fontColor(Theme.TEXT_DIM).margin({ top: 4 })
-            Button(t('retry')).fontSize(12).margin({ top: 10 })
-              .backgroundColor(Theme.ACCENT).fontColor(Theme.TEXT)
+            Text(t('play_failed')).fontSize(14).fontColor(Theme.TEXT)
+            Text(this.errMsg)
+              .fontSize(11)
+              .fontColor(Theme.TEXT_DIM)
+              .maxLines(3)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ top: 6 })
+              .padding({ left: 24, right: 24 })
+            Button(t('retry'))
+              .fontSize(12)
+              .margin({ top: 12 })
+              .backgroundColor(Theme.ACCENT)
+              .fontColor(Theme.TEXT)
               .onClick(() => this.loadPlay())
           }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
         }
 
-        // 顶栏
         Row() {
           Text('‹')
             .fontSize(24)
@@ -318,22 +417,38 @@ struct PlayerPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .margin({ left: 10 })
             .layoutWeight(1)
-          Text(this.muted ? '🔇' : '🔊').fontSize(16).margin({ right: 14 }).onClick(() => this.toggleMute())
-          Text(this.landscape ? '↙' : '↗').fontSize(16).onClick(() => this.toggleFullscreen())
+          Text(this.muted ? t('unmute') : t('mute'))
+            .fontSize(11)
+            .fontColor(Theme.TEXT)
+            .padding({ left: 7, right: 7, top: 4, bottom: 4 })
+            .backgroundColor('rgba(0,0,0,0.4)')
+            .borderRadius(8)
+            .margin({ right: 8 })
+            .onClick(() => this.toggleMute())
+          Text(this.landscape ? t('exit_full') : t('fullscreen'))
+            .fontSize(11)
+            .fontColor(Theme.TEXT)
+            .padding({ left: 7, right: 7, top: 4, bottom: 4 })
+            .backgroundColor('rgba(0,0,0,0.4)')
+            .borderRadius(8)
+            .onClick(() => this.toggleFullscreen())
         }
         .width('100%')
         .padding({ left: 12, right: 14, top: 10 })
         .align(Alignment.Top)
 
-        // 中央播放按钮
         if (!this.playing && !this.loading && this.errMsg === '') {
-          Text('▶')
-            .fontSize(48)
-            .fontColor('rgba(255,255,255,0.85)')
-            .onClick(() => this.togglePlay())
+          Stack() {
+            Circle().width(72).height(72).fill('rgba(0,0,0,0.5)')
+            Path()
+              .commands('M4 0 L4 28 L24 14 Z')
+              .fill(Color.White)
+          }
+          .width(72)
+          .height(72)
+          .onClick(() => this.togglePlay())
         }
 
-        // 字幕
         if (this.currentCue !== '') {
           Text(this.currentCue)
             .fontSize(15)
@@ -346,7 +461,6 @@ struct PlayerPage {
             .maxLines(2)
         }
 
-        // 底部控制条
         Column() {
           Slider({
             value: Math.min(this.posMs, this.duration > 0 ? this.duration : 1),
@@ -381,7 +495,6 @@ struct PlayerPage {
       .backgroundColor('#000000')
 
       if (!this.landscape) {
-        // 集数横条
         Row() {
           Text(t('episodes')).fontSize(15).fontWeight(FontWeight.Bold).fontColor(Theme.TEXT)
           Blank()
@@ -402,7 +515,7 @@ struct PlayerPage {
                 .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                 .opacity(ep.locked ? 0.5 : 1)
                 .onClick(() => this.switchEpisode(ep))
-            }, (ep: EpisodeItem) => 'chip' + ep.episode_id)
+            }, (ep: EpisodeItem, idx: number) => 'chip' + ep.episode_id)
           }
           .padding({ left: 16, right: 16 })
         }
@@ -411,7 +524,6 @@ struct PlayerPage {
         .width('100%')
         .height(42)
 
-        // 快捷上/下一集
         Row() {
           Button('⏮ ' + t('prev_ep'))
             .fontSize(13).fontColor(Theme.TEXT).backgroundColor(Theme.BG_CARD)
@@ -425,7 +537,6 @@ struct PlayerPage {
         .padding({ left: 16, right: 16, top: 8 })
       }
 
-      // 选集面板
       if (this.showEpPanel) {
         Column() {
           Column() {
@@ -451,7 +562,7 @@ struct PlayerPage {
                     .backgroundColor(ep.episode_no === this.currentEpNo ? Theme.ACCENT : Theme.BG_CARD)
                     .onClick(() => this.switchEpisode(ep))
                 }
-              }, (ep: EpisodeItem) => 'panel' + ep.episode_id)
+              }, (ep: EpisodeItem, idx: number) => 'panel' + ep.episode_id)
             }
             .columnsTemplate('repeat(5, 1fr)')
             .columnsGap(8)
@@ -475,6 +586,39 @@ struct PlayerPage {
     .width('100%')
     .height('100%')
     .backgroundColor(Theme.BG)
+  }
+}
+
+// 候选播放地址：优先 h264/mp4，其余码流作为回退
+function buildCandidates(pd: PlayData): string[] {
+  const out: string[] = [];
+  const sel = pd.selected;
+  if (sel && sel.url) {
+    out.push(sel.url);
+  }
+  if (pd.streams) {
+    for (const s of pd.streams) {
+      if (s.codec === 'h264' && out.indexOf(s.url) < 0) {
+        out.push(s.url);
+      }
+    }
+    for (const s of pd.streams) {
+      if (out.indexOf(s.url) < 0) {
+        out.push(s.url);
+      }
+    }
+  }
+  return out;
+}
+
+// 兼容 void / Promise 返回的调用：Promise 吞掉 rejection，同步异常记录日志
+function ignore(p: Promise<void> | void): void {
+  try {
+    if (p) {
+      (p as Promise<void>).catch(() => {});
+    }
+  } catch (e) {
+    console.error('player call failed: ' + (e as Error).message);
   }
 }
 
@@ -512,11 +656,4 @@ function vttTimeToMs(s: string): number {
     return 0;
   }
   return Number(m[1]) * 3600000 + Number(m[2]) * 60000 + Number(m[3]) * 1000 + Number(m[4]);
-}
-
-// 兼容 void / Promise 返回的 AVPlayer 调用：有 Promise 则吞掉 rejection
-function ignore(p: Promise<void> | void): void {
-  if (p) {
-    (p as Promise<void>).catch(() => {});
-  }
 }
