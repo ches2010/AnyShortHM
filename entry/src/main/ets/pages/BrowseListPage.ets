@@ -100,7 +100,7 @@ struct BrowseListPage {
                     onOpen: (it: TitleItem) => this.openDetail(it)
                   })
                 }
-              }, (item: TitleItem) => item.title_id + '_' + idx)
+              }, (item: TitleItem, idx: number) => item.title_id + '_' + idx)
             }
             .columnsTemplate('1fr 1fr 1fr')
             .columnsGap(12)
