@@ -4,15 +4,26 @@
 原生应用（ArkTS + ArkUI，Stage 模型，API 12 / HarmonyOS NEXT）。
 
 移植方式为 **ArkUI 原生重写**（非 WebView 壳）：直接调用站点公开的 `/v1` REST API，
-视频通过 AVPlayer 播放 CDN 直链 mp4/HLS。
+播放内核使用 **IJK（@ohos/ijkplayer，FFmpeg 软解）** 播放 CDN 直链 mp4。
+
+## 仓库结构（两套实现）
+
+| 目录 | 说明 | 构建 |
+|---|---|---|
+| `entry/` `AppScope/` `hvigor/` | ArkTS + ArkUI 原生实现（IJK 内核） | `.github/workflows/build-hap.yml` → HAP + Beta Release |
+| `tauri/` | **Tauri 2 + Vue 3 重构版** | `.github/workflows/build-tauri-web.yml` → 前端构建验证 |
+
+Tauri 版鸿蒙 HAP 需要专用工具链（tauri-cli feat/open-harmony + ohos-rs + Rust ohos target），
+步骤见 [tauri/docs/OHOS_BUILD.md](tauri/docs/OHOS_BUILD.md)。
 
 ## 功能
 
 - 首页：Banner 轮播、热门推荐（spotlight）、分类 Rail 横滑列表、下拉刷新
 - 搜索：防抖搜索 + 搜索建议 + 结果网格 + 分页加载
 - 详情：海报/简介/标签/评分/剧集网格（分页）、收藏、五星评分
-- 播放：AVPlayer 播放（多清晰度取 selected 流）、上/下集、选集面板、
-  进度条拖动、静音、横竖屏切换、观看 10 秒后向服务端上报进度、本地续播（seek）
+- 播放：**IJK 内核**（FFmpeg，兼容性强）、清晰度切换（保持进度）、倍速、±10 秒、
+  上/下集、选集面板、进度条拖动、静音、全屏按视频方向自适应（竖屏沉浸/横屏旋转）、
+  观看 10 秒后上报进度、本地续播（seek）
 - 我的：观看历史（设备维度）、我的收藏（需登录）
 - 登录：Google OAuth，经 ArkWeb 承载 `/v1/auth/google/start`，回跳后重新握手
 - 多语言：简体中文 / English（右上角浮球切换）
@@ -71,6 +82,25 @@ AnyShortHM/
    ```
 5. 手动安装：`hdc install entry-default-signed.hap`
 
+## 自动发布 Release
+
+工作流在 `main` 分支构建成功后，会自动创建/更新 **Beta 1.0.0** 预发布：
+
+| 项 | 值 |
+|---|---|
+| Tag | `v1.0.0-beta.1` |
+| Release 名称 | `Beta 1.0.0 (v1.0.0-beta.1)` |
+| 标记 | prerelease（预发布） |
+| 附件 | `entry-default-unsigned.hap`（未签名） |
+
+- 触发条件：`push` 到 `main`、或手动 `workflow_dispatch`
+- 重复触发会**更新同一个 Release**（同名 tag 复用，不产生堆积）
+- PR 只构建、不发布
+
+**升级版本号**需改两处：
+1. `.github/workflows/build-hap.yml` 的 `env.RELEASE_TAG` / `env.RELEASE_NAME`
+2. `AppScope/app.json5` 的 `versionName`（如 `1.1.0-beta.1`）
+
 ## 配置
 
 - API 地址：`ets/net/ApiClient.ets` 中 `API_BASE`（默认 https://anyshort.net/v1）。
@@ -81,5 +111,10 @@ AnyShortHM/
 - Google 登录依赖站点的 OAuth 流程，需真机可访问 accounts.google.com。
 - 字幕接口当前多数剧集返回空数组，字幕渲染已实现但可能无数据。
 - 金币解锁（gating=free_n 之后的集数）仅提示“需解锁”，未实现内购。
-- 工程已通过 GitHub Actions（HarmonyOS API 26 工具链镜像）实际编译，产出 390 KB 的
-  `entry-default-unsigned.hap`；编译期仅有 deprecated 警告（router/promptAction 旧接口），无错误。
+- 工程已通过 GitHub Actions（HarmonyOS API 26 工具链镜像）实际编译。
+- 引入 IJK 后 HAP 体积约 **27 MB**（仅 arm64-v8a 的 FFmpeg 系列 .so）。
+  工作流会在构建前删除 `x86_64` native 库（`oh_modules/*/libs/x86_64`），
+  只保留真机 ABI arm64-v8a（测试机型 Mate 80）。
+  若需在模拟器运行，请手动恢复 x86_64（或注释掉 workflow 的「仅保留 arm64-v8a」步骤）。
+- 依赖：`@ohos/ijkplayer@2.0.13`（ohpm），其 native 库由包内 `libs/` 提供，
+  构建时随 HAP 打入，无需额外 NDK 编译。
