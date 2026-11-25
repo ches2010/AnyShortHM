@@ -1,5 +1,5 @@
 // AppStore.ets -- preferences-backed key/value store + global UIAbility context.
-import { preferences } from '@ohos.data.preferences';
+import preferences from '@ohos.data.preferences';
 import { common } from '@kit.AbilityKit';
 
 let gContext: common.UIAbilityContext | null = null;
@@ -38,7 +38,7 @@ export async function getString(key: string, def: string): Promise<string> {
     return def;
   }
   try {
-    const v = await gPrefs.get(key, def);
+    const v: preferences.ValueType = await gPrefs.get(key, def);
     return typeof v === 'string' ? v : def;
   } catch (e) {
     return def;
