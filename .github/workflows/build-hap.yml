@@ -1,0 +1,49 @@
+name: Build HAP
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (required by sdkmgr)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Set up HarmonyOS SDK (command-line tools + API 12 toolchains)
+        id: sdk
+        uses: harmonyos-dev/setup-harmonyos-sdk@0.2.0
+
+      - name: Show SDK info
+        run: echo "HarmonyOS SDK path: ${{ steps.sdk.outputs.sdk-path }}"
+
+      - name: Install hvigor from the HarmonyOS npm registry
+        run: |
+          npm config set @ohos:registry=https://repo.harmonyos.com/npm/
+          npm install @ohos/hvigor @ohos/hvigor-ohos-plugin
+
+      - name: Build HAP (unsigned)
+        run: |
+          ./node_modules/.bin/hvigor --mode module -p product=default assembleHap --no-daemon
+
+      - name: Upload HAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyShortHM-hap
+          path: entry/build/default/outputs/default/*.hap
+          if-no-files-found: error

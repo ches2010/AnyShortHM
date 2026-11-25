@@ -1,0 +1,13 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "anyshorthm",
+  "version": "1.0.0",
+  "description": "AnyShort short-drama client, ported from https://anyshort.net to HarmonyOS.",
+  "main": "",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.19"
+  }
+}

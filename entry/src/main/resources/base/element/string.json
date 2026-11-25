@@ -1,0 +1,6 @@
+{
+  "string": [
+    { "name": "ability_desc", "value": "AnyShort main ability" },
+    { "name": "EntryAbility_label", "value": "AnyShort" }
+  ]
+}
