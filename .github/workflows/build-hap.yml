@@ -110,6 +110,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: 清理旧 Release 与 Tag / Drop previous release and tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "$RELEASE_TAG" --yes --cleanup-tag 2>/dev/null || echo "no existing release for $RELEASE_TAG"
+
       - name: 下载 HAP artifact / Download HAP artifact
         uses: actions/download-artifact@v4
         with:
