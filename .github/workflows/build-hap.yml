@@ -1,8 +1,5 @@
 name: Build HAP
 
-# HarmonyOS 云端构建：使用 harmonyos-ci 工具链镜像（内嵌 command-line-tools + SDK）。
-# 模板来源: https://github.com/DaLongZhuaZi/harmonyos-ci (MIT)
-
 on:
   push:
     branches: [main]
@@ -20,6 +17,11 @@ permissions:
 defaults:
   run:
     shell: bash
+
+env:
+  APP_VERSION: 1.0.0-beta.1
+  RELEASE_TAG: v1.0.0-beta.1
+  RELEASE_NAME: Beta 1.0.0
 
 jobs:
   build:
@@ -82,3 +84,47 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: 发布 Release / Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: write
+    steps:
+      - name: 下载 HAP artifact / Download HAP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hap-unsigned
+          path: dist
+
+      - name: 创建或更新 Release / Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }} (${{ env.RELEASE_TAG }})
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: dist/*.hap
+          body: |
+            ## Beta 1.0.0
+
+            AnyShort 鸿蒙客户端 Beta 版（IJK / FFmpeg 播放内核）。
+
+            ### 本版内容
+            - 首页 / 搜索 / 详情 / 剧集列表
+            - IJK（FFmpeg）播放内核：清晰度切换（保留进度）、倍速、快退快进 10 秒、上/下集、字幕
+            - 全屏按视频方向自适应（竖屏沉浸式 / 横屏旋转）
+            - 收藏 / 观看历史 / 评分 / Google 登录
+
+            ### 安装说明
+            附件为 **未签名** HAP，安装前请用 DevEco Studio（自动签名）或 `hap-sign-tool` 重新签名。
+
+            设备要求：HarmonyOS NEXT（API 12 及以上）。
+
+            ### 构建信息
+            - Commit: `${{ github.sha }}`
+            - 工具链：command-line-tools 26.0.0.821（API 26）
