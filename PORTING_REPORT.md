@@ -121,6 +121,21 @@ CI 调试中修复的问题（可供同类工程参考）：
 
 验证：CI run #24 构建通过（commit a5194a0），产物 426,957 字节。
 
+### 播放页 UI 二次适配（真机反馈三）
+
+**问题**：竖屏视频比例错误（被拉伸）、静音/全屏为文字按钮、无清晰度选择。
+
+**修复**：
+1. 视频等比适配：容器 `onAreaChange` 取实际宽高 + `videoSizeChange` 事件取真实视频尺寸，
+   按 contain 算法算出 `viewW/viewH`，XComponent 使用该尺寸居中显示，竖屏 9:16 不再变形
+   （注意：该 SDK 的 `AVPlayer` 无 `videoWidth/videoHeight` 属性，必须用 `videoSizeChange` 事件）；
+2. 静音/全屏改为矢量图标按钮（`Shape` + `Path`，喇叭/声波/斜线、四角箭头），不再用文字；
+3. 新增清晰度选择：解析 `streams` 按 quality 去重并按分辨率降序，底部显示当前档位，
+   点击弹出面板切换；切换时记录当前播放位置（`pendingSeekMs`），新码流 prepared 后 seek 回原位置；
+4. 视频区高度 58% → 62%，画面更大。
+
+验证：CI run #28 构建通过（commit aa7cb9c）。
+
 ## 8. 风险与后续事项
 
 1. ~~本工程未经 DevEco Studio 实际编译~~ → 已通过 CI 实际编译验证（见上节）；
