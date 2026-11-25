@@ -185,6 +185,19 @@ FFmpeg 系列 .so（libavcodec 12MB、libavformat、libswscale、libijkplayer �
 
 验证：CI run #33 构建通过（commit 0bee644），artifact 27,430,741 字节。
 
+### 自动发布 Beta Release
+
+工作流新增 `release` job（`needs: build`，仅 push main / 手动触发时执行）：
+下载 `hap-unsigned` artifact → `softprops/action-gh-release@v2` 创建/更新预发布。
+
+- Tag `v1.0.0-beta.1`、名称 `Beta 1.0.0`、`prerelease: true`
+- 附件 `entry-default-unsigned.hap`（57.6MB，含 arm64-v8a + x86_64 的 FFmpeg 库）
+- `permissions: contents: write` 仅授予 release job；同名 tag 重复发布会更新而非堆积
+- 应用版本号同步为 `1.0.0-beta.1`（AppScope/app.json5）
+
+验证：release 已发布
+https://github.com/ches2010/AnyShortHM/releases/tag/v1.0.0-beta.1
+
 ## 8. 风险与后续事项
 
 1. ~~本工程未经 DevEco Studio 实际编译~~ → 已通过 CI 实际编译验证（见上节）；
