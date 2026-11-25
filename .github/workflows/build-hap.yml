@@ -1,68 +1,84 @@
 name: Build HAP
 
+# HarmonyOS 云端构建：使用 harmonyos-ci 工具链镜像（内嵌 command-line-tools + SDK）。
+# 模板来源: https://github.com/DaLongZhuaZi/harmonyos-ci (MIT)
+
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
-env:
-  CLT_DIR: /home/runner/harmonyos-sdk/command-line-tools
+concurrency:
+  group: build-hap-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build:
+    name: 构建 HAP (debug, 未签名)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    container:
+      image: ghcr.io/dalongzhuazi/harmonyos-ci:api26r
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17 (required by sdkmgr)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Download command-line tools
-        id: sdk
-        uses: harmonyos-dev/setup-harmonyos-sdk@0.2.0
-
-      - name: Install HarmonyOS API 12 toolchains (sdkmgr)
+      - name: 剥离本机签名配置 / Strip local signing config
         run: |
-          export JAVA_TOOL_OPTIONS="$JAVA_TOOL_OPTIONS -Duser.country=CN"
-          SDKMGR="$CLT_DIR/sdkmanager/bin/sdkmgr"
-          chmod +x "$SDKMGR"
-          cd /home/runner/harmonyos-sdk
-          "$SDKMGR" install toolchains:12 OpenHarmony/toolchains:12 --accept-license
-
-      - name: Install hvigor from the HarmonyOS npm registry
-        run: |
-          npm config set @ohos:registry=https://repo.harmonyos.com/npm/
-          npm install @ohos/hvigor @ohos/hvigor-ohos-plugin
-
-      - name: Build HAP (unsigned)
-        run: |
-          set -x
-          export HOS_SDK_HOME=/home/runner/harmonyos-sdk/hwsdk
-          export DEVECO_SDK_HOME=/home/runner/harmonyos-sdk/hwsdk
-          export PATH="$CLT_DIR/bin:$PATH"
-          cd "$GITHUB_WORKSPACE"
-          if [ -x "$(command -v hvigorw)" ]; then
-            hvigorw --mode module -p product=default assembleHap --no-daemon
-          elif [ -f ./node_modules/.bin/hvigor ]; then
-            ./node_modules/.bin/hvigor --mode module -p product=default assembleHap --no-daemon
+          if [ -f .github/scripts/strip_signing.py ]; then
+            python3 .github/scripts/strip_signing.py build-profile.json5
           else
-            node "$CLT_DIR/hvigor/bin/hvigor.js" --mode module -p product=default assembleHap --no-daemon
+            echo "::notice::strip_signing.py not found, skipped"
           fi
 
-      - name: Upload HAP artifact
+      - name: 缓存 hvigor & oh_modules / Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /root/.hvigor
+            **/oh_modules
+          key: hvigor-${{ runner.os }}-${{ hashFiles('**/oh-package-lock.json5') }}
+          restore-keys: |
+            hvigor-${{ runner.os }}-
+
+      - name: 安装依赖 / Install dependencies (ohpm)
+        run: ohpm install --all
+
+      - name: 构建 HAP / Build HAP (debug)
+        run: hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon --stacktrace
+
+      - name: 收集并校验产物 / Collect & verify HAP
+        run: |
+          set -eu
+          mkdir -p dist
+          find . -type f -name '*.hap' -path '*/outputs/*' \
+            -not -path './oh_modules/*' -not -path './node_modules/*' \
+            -exec cp -v {} dist/ \;
+          shopt -s nullglob
+          haps=(dist/*.hap)
+          if [ ${#haps[@]} -eq 0 ]; then
+            echo "::error::No .hap produced - check the build log"
+            exit 1
+          fi
+          for h in "${haps[@]}"; do
+            echo "$h : $(stat -c%s "$h") bytes"
+          done
+
+      - name: 上传 artifact / Upload HAP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AnyShortHM-hap
-          path: entry/build/default/outputs/default/*.hap
+          name: hap-unsigned
+          path: dist/
           if-no-files-found: error
+          retention-days: 14
