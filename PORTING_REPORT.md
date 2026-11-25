@@ -100,6 +100,27 @@ CI 调试中修复的问题（可供同类工程参考）：
 
 验证：修复后 CI 构建通过（run #21，commit 4a256bd），产物 401,661 字节。
 
+### 播放页 UI 适配（真机反馈二）
+
+**症状**：标题栏与进度条错位、重叠在画面中部；顶部未做沉浸式；下方剧集区留大片空白；
+操作组件仅有静音/全屏。
+
+**根因**：`Stack` 内给子组件加的 `.align()` 不生效，所有浮层被 Stack 默认居中，
+导致顶部栏、进度条全部落到画面中心。
+
+**修复**（entry/src/main/ets/pages/PlayerPage.ets）：
+1. 控件层重构为「全屏 Column + Blank 顶/底对齐」，不再依赖 `.align()`；
+2. 控件层设 `hitTestBehavior(HitTestMode.Transparent)`，空白区域点击穿透到视频（单击暂停/播放）；
+3. 全面屏：根容器 `expandSafeArea([SYSTEM],[TOP])` + `getWindowAvoidArea(TYPE_SYSTEM)`
+   取状态栏高度、`px2vp` 换算后作为顶部栏 padding；全屏时 `setWindowSystemBarEnable([])`
+   隐藏系统栏，退出恢复；
+4. 新增操作组件：中央播放/暂停、上一集/下一集、快退/快进 10 秒、倍速循环
+   （1.0/1.25/1.5/2.0x）、静音、全屏、可拖动进度条、字幕叠加；
+5. 剧集区 `layoutWeight(1)` 填充剩余空间并加页脚，消除底部留白；
+6. 图标全部改为 Circle/Path/Rect 矢量绘制，避免 emoji 渲染成彩色方块。
+
+验证：CI run #24 构建通过（commit a5194a0），产物 426,957 字节。
+
 ## 8. 风险与后续事项
 
 1. ~~本工程未经 DevEco Studio 实际编译~~ → 已通过 CI 实际编译验证（见上节）；
