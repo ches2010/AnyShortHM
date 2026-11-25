@@ -46,6 +46,21 @@ AnyShortHM/
 
 ## 构建运行
 
+### 方式一：GitHub Actions（已跑通）
+
+仓库内置 `.github/workflows/build-hap.yml`，push / PR / 手动触发均可构建，
+**无需本地 DevEco Studio**。使用 [harmonyos-ci](https://github.com/DaLongZhuaZi/harmonyos-ci)
+工具链镜像（内嵌 command-line-tools + HarmonyOS SDK）：
+
+- 触发：push 到 `main`、PR、或在 Actions 页面 `Run workflow`
+- 产物：Actions run 页面底部的 `hap-unsigned` artifact（解压得 `entry-default-unsigned.hap`）
+- artifact 保留 14 天
+
+> CI 产出为**未签名** HAP：安装前需用 DevEco Studio 的自动签名或 `hap-sign-tool` 重新签名。
+> `strip_signing.py` 会在构建前剥离本机签名配置（本仓库当前无签名配置，脚本自动跳过）。
+
+### 方式二：本地 DevEco Studio
+
 1. DevEco Studio 5.0+ 打开工程根目录（首次会自动同步 hvigor）。
 2. `File > Settings > Signing Configs` 登录华为账号并勾选自动签名（调试）。
 3. 选择模拟器或真机，Run 即可安装 entry 的 HAP。
@@ -66,4 +81,5 @@ AnyShortHM/
 - Google 登录依赖站点的 OAuth 流程，需真机可访问 accounts.google.com。
 - 字幕接口当前多数剧集返回空数组，字幕渲染已实现但可能无数据。
 - 金币解锁（gating=free_n 之后的集数）仅提示“需解锁”，未实现内购。
-- 本工程未经过 DevEco 实际编译验证，接口名以官方 API 参考为准。
+- 工程已通过 GitHub Actions（HarmonyOS API 26 工具链镜像）实际编译，产出 390 KB 的
+  `entry-default-unsigned.hap`；编译期仅有 deprecated 警告（router/promptAction 旧接口），无错误。
