@@ -6,9 +6,13 @@ import {
 } from '../model/Models';
 import { apiGet, apiPost, apiPut, apiDelete } from './ApiClient';
 
+interface EmptyObj {}
+
+const EMPTY_OBJ: EmptyObj = {};
+
 function dataOf(raw: string): object {
   const env = JSON.parse(raw) as Envelope;
-  return (env.data ?? {}) as object;
+  return env.data ?? EMPTY_OBJ;
 }
 
 function arrayOf(raw: string): object[] {
