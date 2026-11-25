@@ -24,7 +24,7 @@
       "name": "entry",
       "srcPath": "./entry",
       "targets": [
-        { "name": "default", "applyToDefaultProduct": true }
+        { "name": "default" }
       ]
     }
   ]
