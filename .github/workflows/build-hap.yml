@@ -30,7 +30,8 @@ jobs:
         uses: harmonyos-dev/setup-harmonyos-sdk@0.2.0
 
       - name: Show SDK info
-        run: echo "HarmonyOS SDK path: ${{ steps.sdk.outputs.sdk-path }}"
+        run: |
+          echo "HarmonyOS SDK path: ${{ steps.sdk.outputs.sdk-path }}"
 
       - name: Install hvigor from the HarmonyOS npm registry
         run: |
