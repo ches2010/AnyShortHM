@@ -10,6 +10,8 @@ import { Theme } from '../ui/Theme';
 import { fmtTime } from '../ui/Utils';
 
 const SPEEDS: number[] = [1.0, 1.25, 1.5, 2.0];
+const ICON_BTN: number = 42;
+const ICON_GLYPH: number = 24;
 
 @Entry
 @Component
@@ -20,7 +22,8 @@ struct PlayerPage {
   @State posMs: number = 0;
   @State duration: number = 0;
   @State muted: boolean = false;
-  @State landscape: boolean = false;
+  @State landscape: boolean = false;   // 横屏旋转（横屏视频）
+  @State immersive: boolean = false;   // 竖屏沉浸式全屏（竖屏视频）
   @State currentEpNo: number = 1;
   @State currentEpId: number = 0;
   @State showEpPanel: boolean = false;
@@ -30,14 +33,12 @@ struct PlayerPage {
   @State episodes: EpisodeItem[] = [];
   @State statusBarHeight: number = 0;
   @State speed: number = 1.0;
-  // 视频显示尺寸（按真实视频比例等比 contain）
   @State boxW: number = 0;
   @State boxH: number = 0;
   @State viewW: number = 0;
   @State viewH: number = 0;
   @State videoW: number = 540;
   @State videoH: number = 960;
-  // 清晰度
   @State qualities: string[] = [];
   @State curQuality: string = '';
 
@@ -78,8 +79,7 @@ struct PlayerPage {
   onPageHide(): void {
     this.clearStartTimer();
     this.persistProgress();
-    this.restoreWindow();
-    this.landscape = false;
+    this.exitFull();
   }
 
   aboutToDisappear(): void {
@@ -88,7 +88,7 @@ struct PlayerPage {
     this.releasePlayer();
   }
 
-  // ---------- 窗口 / 全面屏 ----------
+  // ---------- 窗口 ----------
 
   private initWindow(): void {
     window.getLastWindow(appContext())
@@ -100,41 +100,66 @@ struct PlayerPage {
       .catch((e: Error) => {});
   }
 
-  private restoreWindow(): void {
+  private hideBars(): void {
+    window.getLastWindow(appContext())
+      .then((w: window.Window) => {
+        const hide: Array<'status' | 'navigation'> = [];
+        w.setWindowSystemBarEnable(hide).catch((e: Error) => {});
+      })
+      .catch((e: Error) => {});
+  }
+
+  private showBars(): void {
     window.getLastWindow(appContext())
       .then((w: window.Window) => {
         const bars: Array<'status' | 'navigation'> = ['status', 'navigation'];
         w.setWindowSystemBarEnable(bars).catch((e: Error) => {});
-        w.setPreferredOrientation(window.Orientation.PORTRAIT).catch((e: Error) => {});
       })
       .catch((e: Error) => {});
   }
 
+  private isPortraitVideo(): boolean {
+    return this.videoH >= this.videoW;
+  }
+
+  private isFull(): boolean {
+    return this.landscape || this.immersive;
+  }
+
+  /** 全屏：竖屏视频 -> 沉浸式（不旋转）；横屏视频 -> 旋转横屏 */
   private toggleFullscreen(): void {
-    window.getLastWindow(appContext())
-      .then((w: window.Window) => {
-        if (!this.landscape) {
-          w.setPreferredOrientation(window.Orientation.LANDSCAPE)
-            .then(() => {
-              const hide: Array<'status' | 'navigation'> = [];
-              w.setWindowSystemBarEnable(hide).catch((e: Error) => {});
-              this.landscape = true;
-            })
-            .catch((e: Error) => {});
-        } else {
-          w.setPreferredOrientation(window.Orientation.PORTRAIT)
-            .then(() => {
-              const bars: Array<'status' | 'navigation'> = ['status', 'navigation'];
-              w.setWindowSystemBarEnable(bars).catch((e: Error) => {});
-              this.landscape = false;
-            })
-            .catch((e: Error) => {});
-        }
-      })
-      .catch((e: Error) => {});
+    if (!this.isFull()) {
+      this.hideBars();
+      if (this.isPortraitVideo()) {
+        this.immersive = true;
+      } else {
+        window.getLastWindow(appContext())
+          .then((w: window.Window) => {
+            w.setPreferredOrientation(window.Orientation.LANDSCAPE)
+              .then(() => { this.landscape = true; })
+              .catch((e: Error) => {});
+          })
+          .catch((e: Error) => {});
+      }
+    } else {
+      this.exitFull();
+    }
   }
 
-  // ---------- 视频尺寸（等比 contain） ----------
+  private exitFull(): void {
+    if (this.landscape) {
+      window.getLastWindow(appContext())
+        .then((w: window.Window) => {
+          w.setPreferredOrientation(window.Orientation.PORTRAIT).catch((e: Error) => {});
+        })
+        .catch((e: Error) => {});
+    }
+    this.landscape = false;
+    this.immersive = false;
+    this.showBars();
+  }
+
+  // ---------- 视频尺寸 ----------
 
   private calcVideoSize(): void {
     if (this.boxW <= 0 || this.boxH <= 0 || this.videoW <= 0 || this.videoH <= 0) {
@@ -523,85 +548,85 @@ struct PlayerPage {
     }
   }
 
-  // ---------- 图标 ----------
+  // ---------- 图标（42vp 按钮 / 24vp 图形） ----------
 
   @Builder
   private iconSpeaker() {
     Stack({ alignContent: Alignment.Center }) {
-      Circle().width(34).height(34).fill('rgba(0,0,0,0.45)')
+      Circle().width(ICON_BTN).height(ICON_BTN).fill('rgba(0,0,0,0.5)')
       Shape() {
         Path()
-          .commands('M3 8 L6 8 L10 4 L10 18 L6 14 L3 14 Z')
+          .commands('M3 9 L6 9 L11 4 L11 20 L6 15 L3 15 Z')
           .fill(Color.White)
         if (this.muted) {
           Path()
-            .commands('M13 6 L19 16')
+            .commands('M14 8 L21 17')
             .fill(Color.Transparent)
             .stroke(Color.White)
-            .strokeWidth(1.8)
+            .strokeWidth(2)
         } else {
           Path()
-            .commands('M13 6 Q16 11 13 16')
+            .commands('M14 8 Q17.5 12 14 16')
             .fill(Color.Transparent)
             .stroke(Color.White)
-            .strokeWidth(1.8)
+            .strokeWidth(2)
           Path()
-            .commands('M15.5 3.5 Q19.5 11 15.5 18.5')
+            .commands('M17 5 Q22 12 17 19')
             .fill(Color.Transparent)
             .stroke(Color.White)
-            .strokeWidth(1.4)
+            .strokeWidth(1.6)
         }
       }
-      .width(22)
-      .height(22)
-      .viewPort({ x: 0, y: 0, width: 22, height: 22 })
+      .width(ICON_GLYPH)
+      .height(ICON_GLYPH)
+      .viewPort({ x: 0, y: 0, width: 24, height: 24 })
     }
-    .width(34)
-    .height(34)
-    .margin({ right: 8 })
+    .width(ICON_BTN)
+    .height(ICON_BTN)
+    .margin({ right: 10 })
     .onClick(() => this.toggleMute())
   }
 
   @Builder
   private iconFullscreen() {
     Stack({ alignContent: Alignment.Center }) {
-      Circle().width(34).height(34).fill('rgba(0,0,0,0.45)')
+      Circle().width(ICON_BTN).height(ICON_BTN).fill('rgba(0,0,0,0.5)')
       Shape() {
-        if (this.landscape) {
+        if (this.isFull()) {
           Path()
-            .commands('M7 0 L7 7 L0 7 M13 0 L13 7 L20 7 M20 13 L13 13 L13 20 M0 13 L7 13 L7 20')
+            .commands('M8 0 L8 8 L0 8 M16 0 L16 8 L24 8 M24 16 L16 16 L16 24 M0 16 L8 16 L8 24')
             .fill(Color.Transparent)
             .stroke(Color.White)
-            .strokeWidth(1.8)
+            .strokeWidth(2.2)
         } else {
           Path()
-            .commands('M0 7 L0 0 L7 0 M13 0 L20 0 L20 7 M20 13 L20 20 L13 20 M7 20 L0 20 L0 13')
+            .commands('M0 8 L0 0 L8 0 M16 0 L24 0 L24 8 M24 16 L24 24 L16 24 M8 24 L0 24 L0 16')
             .fill(Color.Transparent)
             .stroke(Color.White)
-            .strokeWidth(1.8)
+            .strokeWidth(2.2)
         }
       }
-      .width(20)
-      .height(20)
-      .viewPort({ x: 0, y: 0, width: 20, height: 20 })
+      .width(ICON_GLYPH)
+      .height(ICON_GLYPH)
+      .viewPort({ x: 0, y: 0, width: 24, height: 24 })
     }
-    .width(34)
-    .height(34)
+    .width(ICON_BTN)
+    .height(ICON_BTN)
     .onClick(() => this.toggleFullscreen())
   }
 
   @Builder
   private playIcon(size: number) {
     Stack() {
-      Circle().width(size).height(size).fill('rgba(0,0,0,0.45)')
+      Circle().width(size).height(size).fill('rgba(0,0,0,0.5)')
       if (this.playing) {
         Row({ space: size * 0.10 }) {
-          Rect().width(size * 0.12).height(size * 0.36).fill(Color.White).radius(1)
-          Rect().width(size * 0.12).height(size * 0.36).fill(Color.White).radius(1)
+          Rect().width(size * 0.11).height(size * 0.34).fill(Color.White).radius(1)
+          Rect().width(size * 0.11).height(size * 0.34).fill(Color.White).radius(1)
         }
       } else {
         Path()
-          .commands('M0 0 L0 ' + (size * 0.36) + ' L' + (size * 0.30) + ' ' + (size * 0.18) + ' Z')
+          .commands('M0 0 L0 ' + (size * 0.34) + ' L' + (size * 0.28) + ' ' + (size * 0.17) + ' Z')
           .fill(Color.White)
           .margin({ left: size * 0.06 })
       }
@@ -615,24 +640,25 @@ struct PlayerPage {
   private topBar() {
     Row() {
       Text('‹')
-        .fontSize(26)
+        .fontSize(28)
         .fontColor(Theme.TEXT)
+        .padding({ right: 6 })
         .onClick(() => { router.back(); })
       Text(this.titleName + ' · ' + t('ep_short') + this.currentEpNo)
-        .fontSize(14)
+        .fontSize(15)
         .fontColor(Theme.TEXT)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .margin({ left: 10 })
         .layoutWeight(1)
       this.iconSpeaker()
       this.iconFullscreen()
     }
     .width('100%')
+    .alignItems(VerticalAlign.Center)
     .padding({
-      left: 12,
+      left: 14,
       right: 12,
-      top: this.landscape ? 8 : this.statusBarHeight + 6,
+      top: this.isFull() ? 10 : this.statusBarHeight + 8,
       bottom: 8
     })
   }
@@ -660,73 +686,69 @@ struct PlayerPage {
         })
 
       Row() {
-        Text(fmtTime(this.posMs)).fontSize(11).fontColor(Theme.TEXT)
+        Text(fmtTime(this.posMs)).fontSize(12).fontColor(Theme.TEXT)
         Blank()
         if (this.qualities.length > 0) {
           Text(this.curQuality.toUpperCase())
-            .fontSize(11)
+            .fontSize(12)
             .fontColor(Theme.TEXT)
-            .padding({ left: 7, right: 7, top: 2, bottom: 2 })
-            .backgroundColor('rgba(0,0,0,0.45)')
-            .borderRadius(6)
+            .padding({ left: 9, right: 9, top: 3, bottom: 3 })
+            .backgroundColor('rgba(0,0,0,0.5)')
+            .borderRadius(7)
             .onClick(() => { this.showQuality = true; })
         }
         Text(this.speed.toFixed(2) + 'x')
-          .fontSize(11)
+          .fontSize(12)
           .fontColor(Theme.TEXT)
-          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
-          .backgroundColor('rgba(0,0,0,0.45)')
-          .borderRadius(6)
-          .margin({ left: 8 })
+          .padding({ left: 9, right: 9, top: 3, bottom: 3 })
+          .backgroundColor('rgba(0,0,0,0.5)')
+          .borderRadius(7)
+          .margin({ left: 10 })
           .onClick(() => this.cycleSpeed())
         Blank()
-        Text(fmtTime(this.duration)).fontSize(11).fontColor(Theme.TEXT)
+        Text(fmtTime(this.duration)).fontSize(12).fontColor(Theme.TEXT)
       }
       .width('100%')
-      .padding({ top: 2 })
+      .padding({ top: 4 })
 
-      Row({ space: 18 }) {
-        Text(t('prev_ep'))
-          .fontSize(12)
+      Row({ space: 16 }) {
+        Button(t('prev_ep'))
+          .fontSize(13)
           .fontColor(Theme.TEXT)
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .backgroundColor('rgba(0,0,0,0.45)')
-          .borderRadius(8)
+          .backgroundColor('rgba(0,0,0,0.5)')
+          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .onClick(() => this.gotoEp(this.currentEpNo - 1))
-        Text('-10s')
-          .fontSize(12)
+        Button('-10s')
+          .fontSize(13)
           .fontColor(Theme.TEXT)
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .backgroundColor('rgba(0,0,0,0.45)')
-          .borderRadius(8)
+          .backgroundColor('rgba(0,0,0,0.5)')
+          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .onClick(() => this.seekBy(-10000))
-        this.playIcon(52)
-        Text('+10s')
-          .fontSize(12)
+        this.playIcon(56)
+        Button('+10s')
+          .fontSize(13)
           .fontColor(Theme.TEXT)
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .backgroundColor('rgba(0,0,0,0.45)')
-          .borderRadius(8)
+          .backgroundColor('rgba(0,0,0,0.5)')
+          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .onClick(() => this.seekBy(10000))
-        Text(t('next_ep'))
-          .fontSize(12)
+        Button(t('next_ep'))
+          .fontSize(13)
           .fontColor(Theme.TEXT)
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .backgroundColor('rgba(0,0,0,0.45)')
-          .borderRadius(8)
+          .backgroundColor('rgba(0,0,0,0.5)')
+          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .onClick(() => this.gotoEp(this.currentEpNo + 1))
       }
       .width('100%')
       .justifyContent(FlexAlign.Center)
-      .margin({ top: 10, bottom: 8 })
+      .margin({ top: 12, bottom: this.isFull() ? 14 : 10 })
     }
     .width('100%')
-    .padding({ left: 14, right: 14, bottom: 6 })
+    .padding({ left: 16, right: 16 })
   }
 
   build() {
     Column() {
-      // 视频区：按真实视频比例等比居中显示
+      // 视频区
       Stack({ alignContent: Alignment.Center }) {
         XComponent({ id: 'as_player_surface', type: 'surface', controller: this.xcController })
           .width(this.viewW > 0 ? this.viewW + 'vp' : '100%')
@@ -766,7 +788,6 @@ struct PlayerPage {
           .justifyContent(FlexAlign.Center)
         }
 
-        // 顶部控制层
         Column() {
           this.topBar()
           Blank()
@@ -775,12 +796,10 @@ struct PlayerPage {
         .height('100%')
         .hitTestBehavior(HitTestMode.Transparent)
 
-        // 中央播放/暂停（暂停时）
         if (!this.playing && !this.loading && this.errMsg === '') {
-          this.playIcon(68)
+          this.playIcon(72)
         }
 
-        // 字幕
         if (this.currentCue !== '') {
           Column() {
             Blank()
@@ -791,7 +810,7 @@ struct PlayerPage {
               .padding({ left: 10, right: 10, top: 4, bottom: 4 })
               .borderRadius(6)
               .maxLines(2)
-              .margin({ bottom: 118 })
+              .margin({ bottom: 164 })
           }
           .width('100%')
           .height('100%')
@@ -799,7 +818,6 @@ struct PlayerPage {
           .hitTestBehavior(HitTestMode.Transparent)
         }
 
-        // 底部控制层
         Column() {
           Blank()
           this.bottomBar()
@@ -809,7 +827,7 @@ struct PlayerPage {
         .hitTestBehavior(HitTestMode.Transparent)
       }
       .width('100%')
-      .height(this.landscape ? '100%' : '62%')
+      .height(this.isFull() ? '100%' : '60%')
       .backgroundColor('#000000')
       .onAreaChange((oldV: Area, newV: Area) => {
         let w: number = 0;
@@ -827,27 +845,27 @@ struct PlayerPage {
         }
       })
 
-      // 剧集区
-      if (!this.landscape) {
+      // 剧集区（固定高度，保证可见）
+      if (!this.isFull()) {
         Column() {
           Row() {
-            Text(t('episodes')).fontSize(15).fontWeight(FontWeight.Bold).fontColor(Theme.TEXT)
+            Text(t('episodes')).fontSize(16).fontWeight(FontWeight.Bold).fontColor(Theme.TEXT)
             Blank()
-            Text(t('all_episodes') + ' ›').fontSize(12).fontColor(Theme.TEXT_DIM)
+            Text(t('all_episodes') + ' ›').fontSize(13).fontColor(Theme.TEXT_DIM)
               .onClick(() => { this.showEpPanel = true; })
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 14, bottom: 10 })
+          .padding({ left: 16, right: 16, top: 12, bottom: 8 })
 
           Scroll() {
             Row({ space: 8 }) {
               ForEach(this.episodes, (ep: EpisodeItem, idx: number) => {
                 Text(t('ep_prefix') + ep.episode_no + t('ep_suffix'))
-                  .fontSize(12)
+                  .fontSize(13)
                   .fontColor(ep.episode_no === this.currentEpNo ? Theme.TEXT : Theme.TEXT_DIM)
                   .backgroundColor(ep.episode_no === this.currentEpNo ? Theme.ACCENT : Theme.BG_CARD)
-                  .borderRadius(14)
-                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                  .borderRadius(15)
+                  .padding({ left: 13, right: 13, top: 7, bottom: 7 })
                   .opacity(ep.locked ? 0.5 : 1)
                   .onClick(() => this.switchEpisode(ep))
               }, (ep: EpisodeItem, idx: number) => 'chip' + ep.episode_id)
@@ -857,37 +875,34 @@ struct PlayerPage {
           .scrollable(ScrollDirection.Horizontal)
           .scrollBar(BarState.Off)
           .width('100%')
-          .height(42)
+          .height(44)
 
           Row({ space: 12 }) {
             Button(t('prev_ep'))
-              .fontSize(13)
+              .fontSize(14)
               .fontColor(Theme.TEXT)
               .backgroundColor(Theme.BG_CARD)
               .layoutWeight(1)
               .onClick(() => this.gotoEp(this.currentEpNo - 1))
             Button(t('next_ep'))
-              .fontSize(13)
+              .fontSize(14)
               .fontColor(Theme.TEXT)
               .backgroundColor(Theme.ACCENT)
               .layoutWeight(1)
               .onClick(() => this.gotoEp(this.currentEpNo + 1))
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 6 })
+          .padding({ left: 16, right: 16, top: 8 })
 
           Blank()
-
-          Text('数据来自 anyshort.net')
-            .fontSize(10)
-            .fontColor(Theme.TEXT_DIM)
-            .opacity(0.55)
-            .margin({ bottom: 12 })
         }
         .width('100%')
-        .layoutWeight(1)
+        .height(220)
+        .backgroundColor(Theme.BG)
         .alignItems(HorizontalAlign.Center)
       }
+
+      Blank()
 
       // 选集面板
       if (this.showEpPanel) {
@@ -985,7 +1000,6 @@ struct PlayerPage {
   }
 }
 
-// 候选播放地址：优先 h264/mp4，其余码流作为回退
 function buildCandidates(pd: PlayData): string[] {
   const out: string[] = [];
   const sel = pd.selected;
@@ -1007,7 +1021,6 @@ function buildCandidates(pd: PlayData): string[] {
   return out;
 }
 
-// 兼容 void / Promise 返回的调用
 function ignore(p: Promise<void> | void): void {
   try {
     if (p) {
@@ -1018,7 +1031,6 @@ function ignore(p: Promise<void> | void): void {
   }
 }
 
-// 解析 WEBVTT 字幕
 function parseVtt(text: string): SubCue[] {
   const cues: SubCue[] = [];
   const lines = text.split(/\r?\n/);
