@@ -57,6 +57,21 @@ jobs:
       - name: 安装依赖 / Install dependencies (ohpm)
         run: ohpm install --all
 
+      - name: 仅保留 arm64-v8a / Keep arm64-v8a only (drop x86_64)
+        run: |
+          set -eu
+          removed=0
+          while IFS= read -r d; do
+            rm -rf "$d"
+            echo "removed $d"
+            removed=$((removed + 1))
+          done < <(find . -type d -path '*/oh_modules/*/libs/x86_64' 2>/dev/null || true)
+          if [ "$removed" -eq 0 ]; then
+            echo "::warning::no x86_64 native dir found (already clean?)"
+          fi
+          echo "removed_dirs=$removed"
+          find . -type d -path '*/oh_modules/*/libs/*' -maxdepth 8 2>/dev/null | head -20
+
       - name: 构建 HAP / Build HAP (debug)
         run: hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon --stacktrace
 
