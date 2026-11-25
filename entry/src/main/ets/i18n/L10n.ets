@@ -53,7 +53,8 @@ const ZH: Record<string, string> = {
   'ep_short': '第',
   'ep_prefix': '第',
   'ep_suffix': '集',
-  'all_episodes': '全部剧集'
+  'all_episodes': '全部剧集',
+  'quality': '清晰度'
 };
 
 const EN: Record<string, string> = {
@@ -102,7 +103,8 @@ const EN: Record<string, string> = {
   'ep_short': 'EP',
   'ep_prefix': 'EP',
   'ep_suffix': '',
-  'all_episodes': 'All episodes'
+  'all_episodes': 'All episodes',
+  'quality': 'Quality'
 };
 
 export function dict(): Record<string, string> {
