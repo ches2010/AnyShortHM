@@ -198,6 +198,20 @@ FFmpeg 系列 .so（libavcodec 12MB、libavformat、libswscale、libijkplayer �
 验证：release 已发布
 https://github.com/ches2010/AnyShortHM/releases/tag/v1.0.0-beta.1
 
+### ABI 瘦身（目标机型 Mate 80 = arm64-v8a）
+
+**背景**：IJK 包同时提供 arm64-v8a 与 x86_64 两套 FFmpeg 库，全量 HAP 达 57.6MB。
+
+**尝试与结论**：
+- 先尝试 `entry/build-profile.json5` 的 `targets[0].abiFilters: ["arm64-v8a"]`，
+  被 hvigor 26 的 schema 拒绝（targets 允许字段仅 name/config/source/resource/runtimeOS/output）；
+- 改为在 CI 构建前删除 x86_64 目录（`oh_modules/*/libs/x86_64`），hvigor 打包时不再纳入。
+
+**结果**：Release 附件从 57.64MB → **27.20MB**（-53%）。
+
+**注意**：模拟器（x86_64）将无法加载 IJK 原生库；如需模拟器调试，
+注释 workflow 中的「仅保留 arm64-v8a」步骤即可恢复双 ABI。
+
 ## 8. 风险与后续事项
 
 1. ~~本工程未经 DevEco Studio 实际编译~~ → 已通过 CI 实际编译验证（见上节）；
