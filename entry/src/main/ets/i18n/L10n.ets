@@ -49,7 +49,11 @@ const ZH: Record<string, string> = {
   'fullscreen': '全屏',
   'exit_full': '退出全屏',
   'play_failed': '播放失败',
-  'player_fail': '视频加载失败（CDN 可能限制直链或当前网络不可达）'
+  'player_fail': '视频加载失败（CDN 可能限制直链或当前网络不可达）',
+  'ep_short': '第',
+  'ep_prefix': '第',
+  'ep_suffix': '集',
+  'all_episodes': '全部剧集'
 };
 
 const EN: Record<string, string> = {
@@ -94,7 +98,11 @@ const EN: Record<string, string> = {
   'fullscreen': 'Fullscreen',
   'exit_full': 'Exit full',
   'play_failed': 'Playback failed',
-  'player_fail': 'Failed to load video (CDN may block direct links or network unreachable)'
+  'player_fail': 'Failed to load video (CDN may block direct links or network unreachable)',
+  'ep_short': 'EP',
+  'ep_prefix': 'EP',
+  'ep_suffix': '',
+  'all_episodes': 'All episodes'
 };
 
 export function dict(): Record<string, string> {
