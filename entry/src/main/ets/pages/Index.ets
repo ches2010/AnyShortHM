@@ -7,7 +7,7 @@ import { currentLang, loadLang, setLang, t, LANG_ZH, LANG_EN } from '../i18n/L10
 @Entry
 @Component
 struct Index {
-  @State tabIndex: number = 0;
+  @State curTab: number = 0;
   @State lang: string = LANG_ZH;
 
   aboutToAppear(): void {
@@ -28,11 +28,11 @@ struct Index {
     Column() {
       Text(glyph)
         .fontSize(20)
-        .fontColor(this.tabIndex === idx ? Theme.ACCENT : Theme.TEXT_DIM)
+        .fontColor(this.curTab === idx ? Theme.ACCENT : Theme.TEXT_DIM)
       Text(t(labelKey))
         .fontSize(10)
         .margin({ top: 2 })
-        .fontColor(this.tabIndex === idx ? Theme.ACCENT : Theme.TEXT_DIM)
+        .fontColor(this.curTab === idx ? Theme.ACCENT : Theme.TEXT_DIM)
     }
     .width('100%')
     .justifyContent(FlexAlign.Center)
@@ -40,7 +40,7 @@ struct Index {
 
   build() {
     Stack() {
-      Tabs({ barPosition: BarPosition.End, index: this.tabIndex }) {
+      Tabs({ barPosition: BarPosition.End, index: this.curTab }) {
         TabContent() {
           HomeView({ langVersion: this.lang })
         }.tabBar(this.tabItem('nav_home', 0, '⌂'))
@@ -57,7 +57,7 @@ struct Index {
       .barBackgroundColor(Theme.BG_SOFT)
       .backgroundColor(Theme.BG)
       .onChange((i: number) => {
-        this.tabIndex = i;
+        this.curTab = i;
       })
 
       // 语言切换浮球
