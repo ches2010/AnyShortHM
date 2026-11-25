@@ -152,6 +152,39 @@ CI 调试中修复的问题（可供同类工程参考）：
 
 验证：CI run #30 构建通过（commit 8f71549）。
 
+### 播放内核切换为 IJK（FFmpeg）
+
+需求：把播放内核由系统 AVPlayer 换成 IJK（B 站 ijkplayer 的鸿蒙移植）。
+
+**选型核实**：`@ohos/ijkplayer`（OpenHarmony-SIG/ohos_ijkplayer，已迁移至 gitcode），
+ohpm 最新版 **2.0.13**，`compatibleSdkVersion: 12`；包内提供 arm64-v8a 与 x86_64 的
+FFmpeg 系列 .so（libavcodec 12MB、libavformat、libswscale、libijkplayer 等），
+以及 `libijkplayer_napi.so` 作为 XComponent 的 NAPI 模块。
+
+**集成方式**（实际按包内 `IjkMediaPlayer.ets` 源码核对 API）：
+- `entry/oh-package.json5` 增加 `"@ohos/ijkplayer": "2.0.13"`
+- XComponent 改为 `{ id: 'as_player_surface', type: 'surface', libraryname: 'ijkplayer_napi' }`
+- `onLoad(ctx)` 拿到的是 NAPI 模块对象，传给 `player.setContext(ctx, id)` 绑定 Surface
+- 调用序列：`new IjkMediaPlayer()` → `setContext` → `setDebug` →
+  `native_setup(VideoCodecMode.SURFACE)` → `setDataSource(url)` → `setOption(...)` →
+  注册监听器（`setOnPreparedListener` / `setOnVideoSizeChangedListener` /
+  `setOnCompletionListener` / `setOnErrorListener` / `setOnBufferingUpdateListener`）→
+  `setMessageListener()` → `prepareAsync()`，在 `onPrepared` 中 `start()`
+- 进度：IJK 不推送 position，改为 500ms `setInterval` 轮询 `getCurrentPosition()`
+- 控制映射：`pause/start`、`seekTo(String(ms))`、`setSpeed("2.0f")`（配 soundtouch 选项）、
+  `setVolume("0"/"1","0"/"1")`；换集/换清晰度 = 释放旧实例并新建（保持 `pendingSeekMs` 续播）
+- 视频尺寸：改用 `onVideoSizeChanged(width,height,sarNum,sarDen)` 回调（AVPlayer 的
+  `videoWidth/videoHeight` 在 API 26 SDK 中不存在）
+
+**影响与风险**：
+1. HAP 体积 0.46MB → **27.4MB**（artifact 压缩后），安装包显著增大；
+2. 该包声明 `compatibleSdkType: OpenHarmony`，在 HarmonyOS 工程（runtimeOS: HarmonyOS）
+   中编译通过、资源打包正常，但运行时兼容性需真机验证；
+3. 软解功耗高于 AVPlayer 硬解，低端机需关注发热与耗电；
+4. CI 仅验证编译与打包，播放链路（Surface 绑定、软解渲染）仍需真机实测。
+
+验证：CI run #33 构建通过（commit 0bee644），artifact 27,430,741 字节。
+
 ## 8. 风险与后续事项
 
 1. ~~本工程未经 DevEco Studio 实际编译~~ → 已通过 CI 实际编译验证（见上节）；
