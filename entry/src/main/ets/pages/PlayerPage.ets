@@ -24,11 +24,22 @@ struct PlayerPage {
   @State currentEpNo: number = 1;
   @State currentEpId: number = 0;
   @State showEpPanel: boolean = false;
+  @State showQuality: boolean = false;
   @State currentCue: string = '';
   @State playData: PlayData | null = null;
   @State episodes: EpisodeItem[] = [];
   @State statusBarHeight: number = 0;
   @State speed: number = 1.0;
+  // 视频显示尺寸（按真实视频比例等比 contain）
+  @State boxW: number = 0;
+  @State boxH: number = 0;
+  @State viewW: number = 0;
+  @State viewH: number = 0;
+  @State videoW: number = 540;
+  @State videoH: number = 960;
+  // 清晰度
+  @State qualities: string[] = [];
+  @State curQuality: string = '';
 
   private avPlayer: media.AVPlayer | null = null;
   private xcController: XComponentController = new XComponentController();
@@ -43,7 +54,9 @@ struct PlayerPage {
   private slug: string = '';
   private cues: SubCue[] = [];
   private resumePosMs: number = 0;
+  private pendingSeekMs: number = 0;
   private startTimer: number = -1;
+  private qualityUrls: Map<string, string> = new Map<string, string>();
 
   aboutToAppear(): void {
     const p = router.getParams() as Record<string, Object>;
@@ -75,7 +88,7 @@ struct PlayerPage {
     this.releasePlayer();
   }
 
-  // ---------- 窗口 / 全面屏适配 ----------
+  // ---------- 窗口 / 全面屏 ----------
 
   private initWindow(): void {
     window.getLastWindow(appContext())
@@ -121,6 +134,23 @@ struct PlayerPage {
       .catch((e: Error) => {});
   }
 
+  // ---------- 视频尺寸（等比 contain） ----------
+
+  private calcVideoSize(): void {
+    if (this.boxW <= 0 || this.boxH <= 0 || this.videoW <= 0 || this.videoH <= 0) {
+      return;
+    }
+    const vr: number = this.videoW / this.videoH;
+    const br: number = this.boxW / this.boxH;
+    if (vr <= br) {
+      this.viewH = this.boxH;
+      this.viewW = this.boxH * vr;
+    } else {
+      this.viewW = this.boxW;
+      this.viewH = this.boxW / vr;
+    }
+  }
+
   // ---------- 播放数据 ----------
 
   private persistProgress(): void {
@@ -137,12 +167,37 @@ struct PlayerPage {
       .catch((e: Error) => {});
   }
 
+  private buildQualityMap(pd: PlayData): void {
+    this.qualityUrls = new Map<string, string>();
+    const arr: string[] = [];
+    if (pd.streams) {
+      for (const s of pd.streams) {
+        if (s.quality && s.codec === 'h264' && !this.qualityUrls.has(s.quality)) {
+          this.qualityUrls.set(s.quality, s.url);
+        }
+      }
+      for (const s of pd.streams) {
+        if (s.quality && !this.qualityUrls.has(s.quality)) {
+          this.qualityUrls.set(s.quality, s.url);
+        }
+      }
+    }
+    this.qualityUrls.forEach((v: string, k: string) => {
+      arr.push(k);
+    });
+    arr.sort((a: string, b: string) => parseInt(b) - parseInt(a));
+    this.qualities = arr;
+    const selQ: string = pd.selected && pd.selected.quality ? pd.selected.quality : '';
+    this.curQuality = selQ !== '' ? selQ : (arr.length > 0 ? arr[0] : '');
+  }
+
   private loadPlay(): void {
     this.loading = true;
     this.errMsg = '';
     ApiService.play(this.currentEpId, currentLang(), '')
       .then((pd: PlayData) => {
         this.playData = pd;
+        this.buildQualityMap(pd);
         this.candidates = buildCandidates(pd);
         this.candIndex = 0;
         this.loading = false;
@@ -177,9 +232,11 @@ struct PlayerPage {
     this.releasePlayer();
     this.errMsg = '';
     this.loading = true;
-    this.playing = false;
-    this.posMs = 0;
-    this.duration = 0;
+    if (this.pendingSeekMs <= 0) {
+      this.playing = false;
+      this.posMs = 0;
+      this.duration = 0;
+    }
     media.createAVPlayer()
       .then((p: media.AVPlayer) => {
         this.avPlayer = p;
@@ -190,11 +247,19 @@ struct PlayerPage {
           } else if (state === 'prepared') {
             this.clearStartTimer();
             this.duration = p.duration;
-            if (this.resumePosMs > 5000 && this.resumePosMs < p.duration - 5000) {
+            if (p.videoWidth > 0 && p.videoHeight > 0) {
+              this.videoW = p.videoWidth;
+              this.videoH = p.videoHeight;
+              this.calcVideoSize();
+            }
+            if (this.pendingSeekMs > 1000) {
+              ignore(p.seek(this.pendingSeekMs));
+              this.pendingSeekMs = 0;
+            } else if (this.resumePosMs > 5000 && this.resumePosMs < p.duration - 5000) {
               ignore(p.seek(this.resumePosMs));
               promptAction.showToast({ message: t('continue_watch'), duration: 1500 });
+              this.resumePosMs = 0;
             }
-            this.resumePosMs = 0;
             ignore(p.play());
             if (this.speed !== 1.0) {
               ignore(p.setSpeed(this.speed));
@@ -207,6 +272,13 @@ struct PlayerPage {
           } else if (state === 'completed') {
             this.playing = false;
             this.autoNext();
+          }
+        });
+        p.on('videoSizeChange', (width: number, height: number) => {
+          if (width > 0 && height > 0) {
+            this.videoW = width;
+            this.videoH = height;
+            this.calcVideoSize();
           }
         });
         p.on('timeUpdate', (time: number) => {
@@ -295,7 +367,7 @@ struct PlayerPage {
     }
   }
 
-  // ---------- 操作组件 ----------
+  // ---------- 操作 ----------
 
   private togglePlay(): void {
     if (this.avPlayer === null) {
@@ -352,6 +424,23 @@ struct PlayerPage {
     }
   }
 
+  private switchQuality(q: string): void {
+    this.showQuality = false;
+    if (q === this.curQuality) {
+      return;
+    }
+    const url: string = this.qualityUrls.get(q) ?? '';
+    if (url === '') {
+      return;
+    }
+    this.curQuality = q;
+    this.pendingSeekMs = this.posMs > 1000 ? this.posMs : 0;
+    this.candidates = [url];
+    this.candIndex = 0;
+    this.startPlayer(url);
+    promptAction.showToast({ message: t('quality') + ': ' + q, duration: 1200 });
+  }
+
   private switchEpisode(ep: EpisodeItem): void {
     if (ep.locked === true) {
       promptAction.showToast({ message: t('episode_locked'), duration: 1600 });
@@ -365,6 +454,7 @@ struct PlayerPage {
     this.currentCue = '';
     this.posMs = 0;
     this.duration = 0;
+    this.pendingSeekMs = 0;
     this.showEpPanel = false;
     this.loadPlay();
   }
@@ -438,7 +528,72 @@ struct PlayerPage {
     }
   }
 
-  // ---------- 控件 ----------
+  // ---------- 图标 ----------
+
+  @Builder
+  private iconSpeaker() {
+    Stack({ alignContent: Alignment.Center }) {
+      Circle().width(34).height(34).fill('rgba(0,0,0,0.45)')
+      Shape() {
+        Path()
+          .commands('M3 8 L6 8 L10 4 L10 18 L6 14 L3 14 Z')
+          .fill(Color.White)
+        if (this.muted) {
+          Path()
+            .commands('M13 6 L19 16')
+            .fill(Color.Transparent)
+            .stroke(Color.White)
+            .strokeWidth(1.8)
+        } else {
+          Path()
+            .commands('M13 6 Q16 11 13 16')
+            .fill(Color.Transparent)
+            .stroke(Color.White)
+            .strokeWidth(1.8)
+          Path()
+            .commands('M15.5 3.5 Q19.5 11 15.5 18.5')
+            .fill(Color.Transparent)
+            .stroke(Color.White)
+            .strokeWidth(1.4)
+        }
+      }
+      .width(22)
+      .height(22)
+      .viewPort({ x: 0, y: 0, width: 22, height: 22 })
+    }
+    .width(34)
+    .height(34)
+    .margin({ right: 8 })
+    .onClick(() => this.toggleMute())
+  }
+
+  @Builder
+  private iconFullscreen() {
+    Stack({ alignContent: Alignment.Center }) {
+      Circle().width(34).height(34).fill('rgba(0,0,0,0.45)')
+      Shape() {
+        if (this.landscape) {
+          Path()
+            .commands('M7 0 L7 7 L0 7 M13 0 L13 7 L20 7 M20 13 L13 13 L13 20 M0 13 L7 13 L7 20')
+            .fill(Color.Transparent)
+            .stroke(Color.White)
+            .strokeWidth(1.8)
+        } else {
+          Path()
+            .commands('M0 7 L0 0 L7 0 M13 0 L20 0 L20 7 M20 13 L20 20 L13 20 M7 20 L0 20 L0 13')
+            .fill(Color.Transparent)
+            .stroke(Color.White)
+            .strokeWidth(1.8)
+        }
+      }
+      .width(20)
+      .height(20)
+      .viewPort({ x: 0, y: 0, width: 20, height: 20 })
+    }
+    .width(34)
+    .height(34)
+    .onClick(() => this.toggleFullscreen())
+  }
 
   @Builder
   private playIcon(size: number) {
@@ -475,21 +630,8 @@ struct PlayerPage {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .margin({ left: 10 })
         .layoutWeight(1)
-      Text(this.muted ? t('unmute') : t('mute'))
-        .fontSize(11)
-        .fontColor(Theme.TEXT)
-        .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-        .backgroundColor('rgba(0,0,0,0.45)')
-        .borderRadius(9)
-        .margin({ right: 8 })
-        .onClick(() => this.toggleMute())
-      Text(this.landscape ? t('exit_full') : t('fullscreen'))
-        .fontSize(11)
-        .fontColor(Theme.TEXT)
-        .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-        .backgroundColor('rgba(0,0,0,0.45)')
-        .borderRadius(9)
-        .onClick(() => this.toggleFullscreen())
+      this.iconSpeaker()
+      this.iconFullscreen()
     }
     .width('100%')
     .padding({
@@ -525,12 +667,22 @@ struct PlayerPage {
       Row() {
         Text(fmtTime(this.posMs)).fontSize(11).fontColor(Theme.TEXT)
         Blank()
+        if (this.qualities.length > 0) {
+          Text(this.curQuality.toUpperCase())
+            .fontSize(11)
+            .fontColor(Theme.TEXT)
+            .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+            .backgroundColor('rgba(0,0,0,0.45)')
+            .borderRadius(6)
+            .onClick(() => { this.showQuality = true; })
+        }
         Text(this.speed.toFixed(2) + 'x')
           .fontSize(11)
           .fontColor(Theme.TEXT)
           .padding({ left: 7, right: 7, top: 2, bottom: 2 })
           .backgroundColor('rgba(0,0,0,0.45)')
           .borderRadius(6)
+          .margin({ left: 8 })
           .onClick(() => this.cycleSpeed())
         Blank()
         Text(fmtTime(this.duration)).fontSize(11).fontColor(Theme.TEXT)
@@ -579,11 +731,11 @@ struct PlayerPage {
 
   build() {
     Column() {
-      // 视频区（沉浸式，延伸到状态栏下）
+      // 视频区：按真实视频比例等比居中显示
       Stack({ alignContent: Alignment.Center }) {
         XComponent({ id: 'as_player_surface', type: 'surface', controller: this.xcController })
-          .width('100%')
-          .height('100%')
+          .width(this.viewW > 0 ? this.viewW + 'vp' : '100%')
+          .height(this.viewH > 0 ? this.viewH + 'vp' : '100%')
           .onLoad(() => {
             this.surfaceReady = true;
             if (this.pendingUrl !== '') {
@@ -619,7 +771,7 @@ struct PlayerPage {
           .justifyContent(FlexAlign.Center)
         }
 
-        // 顶部控制层：全屏 Column + 顶部对齐（不拦截空白区域点击）
+        // 顶部控制层
         Column() {
           this.topBar()
           Blank()
@@ -628,7 +780,7 @@ struct PlayerPage {
         .height('100%')
         .hitTestBehavior(HitTestMode.Transparent)
 
-        // 中央播放/暂停（暂停时显示）
+        // 中央播放/暂停（暂停时）
         if (!this.playing && !this.loading && this.errMsg === '') {
           this.playIcon(68)
         }
@@ -652,7 +804,7 @@ struct PlayerPage {
           .hitTestBehavior(HitTestMode.Transparent)
         }
 
-        // 底部控制层：全屏 Column + 底部对齐
+        // 底部控制层
         Column() {
           Blank()
           this.bottomBar()
@@ -662,10 +814,25 @@ struct PlayerPage {
         .hitTestBehavior(HitTestMode.Transparent)
       }
       .width('100%')
-      .height(this.landscape ? '100%' : '58%')
+      .height(this.landscape ? '100%' : '62%')
       .backgroundColor('#000000')
+      .onAreaChange((oldV: Area, newV: Area) => {
+        let w: number = 0;
+        let h: number = 0;
+        if (typeof newV.width === 'number') {
+          w = newV.width;
+        }
+        if (typeof newV.height === 'number') {
+          h = newV.height;
+        }
+        if (w > 0 && h > 0) {
+          this.boxW = w;
+          this.boxH = h;
+          this.calcVideoSize();
+        }
+      })
 
-      // 剧集区（填充剩余空间，避免底部大片留白）
+      // 剧集区
       if (!this.landscape) {
         Column() {
           Row() {
@@ -773,6 +940,48 @@ struct PlayerPage {
         .alignItems(HorizontalAlign.Center)
         .onClick(() => { this.showEpPanel = false; })
       }
+
+      // 清晰度面板
+      if (this.showQuality) {
+        Column() {
+          Column() {
+            Row() {
+              Text(t('quality')).fontSize(16).fontWeight(FontWeight.Bold).fontColor(Theme.TEXT)
+              Blank()
+              Text('✕').fontSize(16).fontColor(Theme.TEXT_DIM)
+                .onClick(() => { this.showQuality = false; })
+            }
+            .width('100%')
+            .margin({ bottom: 8 })
+
+            ForEach(this.qualities, (q: string, idx: number) => {
+              Row() {
+                Text(q.toUpperCase())
+                  .fontSize(14)
+                  .fontColor(q === this.curQuality ? Theme.ACCENT : Theme.TEXT)
+                Blank()
+                if (q === this.curQuality) {
+                  Text('✓').fontSize(14).fontColor(Theme.ACCENT)
+                }
+              }
+              .width('100%')
+              .padding({ top: 13, bottom: 13 })
+              .border({ width: { bottom: 1 }, color: Theme.DIVIDER })
+              .onClick(() => this.switchQuality(q))
+            }, (q: string, idx: number) => 'q_' + q)
+          }
+          .width('100%')
+          .padding(16)
+          .borderRadius({ topLeft: 16, topRight: 16 })
+          .backgroundColor(Theme.BG_SOFT)
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0,0,0,0.5)')
+        .justifyContent(FlexAlign.End)
+        .alignItems(HorizontalAlign.Center)
+        .onClick(() => { this.showQuality = false; })
+      }
     }
     .width('100%')
     .height('100%')
@@ -803,7 +1012,7 @@ function buildCandidates(pd: PlayData): string[] {
   return out;
 }
 
-// 兼容 void / Promise 返回的调用：Promise 吞掉 rejection，同步异常记录日志
+// 兼容 void / Promise 返回的调用
 function ignore(p: Promise<void> | void): void {
   try {
     if (p) {
