@@ -11,7 +11,8 @@
 | 目录 | 说明 | 构建 |
 |---|---|---|
 | `entry/` `AppScope/` `hvigor/` | ArkTS + ArkUI 原生实现（IJK 内核） | `.github/workflows/build-hap.yml` → HAP + Beta Release |
-| `tauri/` | **Tauri 2 + Vue 3 重构版** | `.github/workflows/build-tauri-web.yml` → 前端构建验证 |
+| `tauri/` | **Tauri 2 + Vue 3 重构版** | `.github/workflows/build-tauri-web.yml` → 前端构建验证（云 Runner） |
+|  | 同上，鸿蒙 HAP | `.github/workflows/build-tauri-hap.yml` → Tauri HAP（self-hosted Runner） |
 
 Tauri 版鸿蒙 HAP 需要专用工具链（tauri-cli feat/open-harmony + ohos-rs + Rust ohos target），
 步骤见 [tauri/docs/OHOS_BUILD.md](tauri/docs/OHOS_BUILD.md)。

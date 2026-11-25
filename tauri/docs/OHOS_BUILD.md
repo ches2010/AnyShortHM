@@ -91,3 +91,55 @@ Flutter/Tauri 生态均无现成 IJK 鸿蒙插件，需自写：
 3. 前端 `Player.vue` 在检测到 H.265 或播放失败时，改为调用原生播放器通道
 
 当前实现默认用 `<video>`，IJK 作为可选增强。
+
+---
+
+## 7. GitHub Actions（self-hosted Runner）
+
+Tauri 的鸿蒙 HAP 需要 OHOS SDK/NDK + Rust `aarch64-unknown-linux-ohos` target + tauri-cli 鸿蒙分支，
+标准 `ubuntu-latest` 上没有这些，所以流水线跑在**自建 Runner** 上。
+
+工作流：`.github/workflows/build-tauri-hap.yml`（手动触发 `workflow_dispatch`）。
+
+### 7.1 一次性准备
+
+1. **注册 Runner**：仓库 Settings → Actions → Runners → New self-hosted runner，按提示在构建机安装。
+   额外标签填 `ohos`（与工作流输入 `runner_label` 对应）。
+2. **构建机安装依赖**：Node 20、npm、Rust、OHOS command-line-tools（`hvigorw` / `ohpm` 在 PATH）、
+   JDK 17、`rustup target add aarch64-unknown-linux-ohos`、
+   `cargo install --git https://github.com/tauri-apps/tauri --branch feat/open-harmony tauri-cli`。
+   预装 tauri-cli 可省掉每次 20~30 分钟的编译。
+3. **开启构建**：Settings → Secrets and variables → Actions → Variables，
+   新建 `OHOS_RUNNER_ENABLED` = `true`。未设置时只跑预检，跳过 HAP 构建。
+4. **NDK**：确保 Runner 环境变量 `OHOS_NDK_HOME` 指向
+   `command-line-tools/sdk/default/openharmony/native`。
+
+### 7.2 流水线结构
+
+| Job | Runner | 作用 |
+|---|---|---|
+| `preflight` | 云 `ubuntu-latest` | `bash -n` 校验脚本、`vue-tsc` 类型检查、前端构建，产物 `tauri-dist` |
+| `build` | self-hosted（`ohos`） | 下载前端产物 → 工具链自检 → `tauri/scripts/build-ohos.sh` → 上传 `hap-tauri-unsigned` |
+| `release` | 云 `ubuntu-latest` | 可选，`publish_release=true` 时刷新 tag `v1.0.0-beta.1-tauri` 的 Release |
+
+构建逻辑集中在 `tauri/scripts/build-ohos.sh`，本地与 CI 共用同一份，避免两套命令漂移：
+定位 NDK → 前端构建 → `cargo tauri ohos init`（幂等）→ 清空签名配置 → 构建 → 收集 HAP。
+
+### 7.3 手动触发
+
+```bash
+gh workflow run build-tauri-hap.yml -f runner_label=ohos -f publish_release=true
+gh run watch
+```
+
+或网页 Actions → Build Tauri HAP (OHOS) → Run workflow。
+
+### 7.4 常见失败
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| `No runner matching the specified labels` | Runner 未注册或标签不是 `ohos`；改 `runner_label` 输入 |
+| `缺少 Rust target: aarch64-unknown-linux-ohos` | 该 target 在部分版本是 tier 3，需 nightly + `-Z build-std`，或改用 ohos-rs 工具链 |
+| `未找到 OHOS NDK` | 在 Runner 上设置 `OHOS_NDK_HOME`（指向含 `llvm/bin/clang` 的 native 目录） |
+| `当前 tauri-cli 不支持 ohos 子命令` | 装成了稳定版 tauri-cli，需 `feat/open-harmony` 分支 |
+| HAP 未产出 | 看 `gen/ohos` 下 `hvigorw` 日志；多为签名配置或 ohpm 依赖缺失 |

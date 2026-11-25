@@ -1,0 +1,185 @@
+name: Build Tauri HAP (OHOS)
+
+# Tauri 版鸿蒙 HAP 需要 OHOS SDK/NDK + Rust ohos target + tauri-cli(feat/open-harmony)，
+# 标准 GitHub Runner 不具备，因此在 self-hosted Runner 上构建。
+# 启用方式：Settings → Actions → Runners 注册带 `ohos` 标签的 Runner，
+# 再在 Settings → Variables 设置 OHOS_RUNNER_ENABLED=true。
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: 'self-hosted Runner 的额外标签'
+        required: true
+        default: 'ohos'
+        type: string
+      publish_release:
+        description: '构建成功后刷新 Tauri 版 Release'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: build-tauri-hap-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  APP_VERSION: 1.0.0-beta.1
+  RELEASE_TAG: v1.0.0-beta.1-tauri
+  RELEASE_NAME: Beta 1.0.0 (Tauri)
+
+jobs:
+  preflight:
+    name: 预检 / Preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 校验构建脚本与配置文件
+        run: |
+          set -eu
+          bash -n tauri/scripts/build-ohos.sh
+          echo "build-ohos.sh 语法 OK"
+          test -f tauri/docs/OHOS_BUILD.md
+          test -f tauri/src-tauri/tauri.conf.json
+          test -f tauri/package.json
+          if grep -q '^\[patch.crates-io\]' tauri/src-tauri/Cargo.toml; then
+            echo "::warning::Cargo.toml 里 [patch.crates-io] 处于启用状态（OHOS 构建需要它，桌面构建可能需要注释）"
+          fi
+          if [ "${{ vars.OHOS_RUNNER_ENABLED }}" != "true" ]; then
+            echo "::notice::仓库变量 OHOS_RUNNER_ENABLED 未设为 true，本次只跑预检，跳过 HAP 构建"
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tauri/package-lock.json
+
+      - name: 安装依赖
+        working-directory: tauri
+        run: npm ci
+
+      - name: 类型检查
+        working-directory: tauri
+        run: npx vue-tsc --noEmit
+
+      - name: 前端构建
+        working-directory: tauri
+        run: npm run build
+
+      - name: 上传前端产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-dist
+          path: tauri/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: 构建 HAP / Build HAP (self-hosted)
+    needs: preflight
+    if: ${{ vars.OHOS_RUNNER_ENABLED == 'true' }}
+    runs-on: [self-hosted, "${{ github.event.inputs.runner_label }}"]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 下载前端产物
+        uses: actions/download-artifact@v4
+        with:
+          name: tauri-dist
+          path: tauri/dist
+
+      - name: 工具链自检
+        run: |
+          set -eu
+          node -v
+          npm -v
+          cargo -V
+          rustc -Vv
+          echo "--- installed rust targets ---"
+          rustup target list --installed || true
+          echo "--- ohos tooling ---"
+          command -v hvigorw || echo "hvigorw: MISSING"
+          command -v ohpm || echo "ohpm: MISSING"
+          echo "OHOS_NDK_HOME=${OHOS_NDK_HOME:-<unset>}"
+
+      - name: 安装 tauri-cli（OHOS 分支，缺失时）
+        run: |
+          set -eu
+          if cargo tauri --version >/dev/null 2>&1 && cargo tauri ohos --help >/dev/null 2>&1; then
+            echo "tauri-cli 已就绪: $(cargo tauri --version)"
+          else
+            echo "安装 tauri-cli feat/open-harmony（耗时较长，建议在 Runner 上预装）"
+            cargo install --git https://github.com/tauri-apps/tauri --branch feat/open-harmony tauri-cli --locked
+          fi
+
+      - name: 构建 HAP
+        run: bash tauri/scripts/build-ohos.sh
+
+      - name: 产物校验
+        run: |
+          set -eu
+          ls -lh dist-tauri
+          shopt -s nullglob
+          haps=(dist-tauri/*.hap)
+          if [ ${#haps[@]} -eq 0 ]; then
+            echo "::error::未产出 HAP"
+            exit 1
+          fi
+
+      - name: 上传 HAP
+        uses: actions/upload-artifact@v4
+        with:
+          name: hap-tauri-unsigned
+          path: dist-tauri/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: 发布 Release / Publish release
+    needs: build
+    if: ${{ github.event.inputs.publish_release == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 下载 HAP
+        uses: actions/download-artifact@v4
+        with:
+          name: hap-tauri-unsigned
+          path: dist-tauri
+
+      - name: 发布（GitHub API）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          TAG="$RELEASE_TAG"
+          REPO="$GH_REPO"
+          gh api -X DELETE "repos/$REPO/releases/tags/$TAG" >/dev/null 2>&1 || true
+          gh api -X DELETE "repos/$REPO/git/refs/tags/$TAG" >/dev/null 2>&1 || true
+          NOTES=$(printf '## %s\n\nTauri 2 + Vue 3 重构版（鸿蒙）。\n\n- 附件为**未签名** HAP，安装前请用 DevEco Studio 或 hap-sign-tool 重签\n- 设备要求：HarmonyOS NEXT（API 12+），arm64-v8a\n- Commit: `%s`\n' "$RELEASE_NAME" "$GITHUB_SHA")
+          RID=$(gh api -X POST "repos/$REPO/releases" \
+            -f tag_name="$TAG" \
+            -f target_commitish="$GITHUB_SHA" \
+            -f name="$RELEASE_NAME ($TAG)" \
+            -F prerelease=true \
+            -f body="$NOTES" \
+            --jq '.id')
+          echo "release id: $RID"
+          shopt -s nullglob
+          for f in dist-tauri/*.hap; do
+            echo "uploading $f"
+            gh api -X POST "https://uploads.github.com/repos/$REPO/releases/$RID/assets?name=$(basename "$f")" \
+              -H "Content-Type: application/octet-stream" --input "$f" >/dev/null
+          done
+          gh api "repos/$REPO/releases/tags/$TAG" --jq '.html_url'
