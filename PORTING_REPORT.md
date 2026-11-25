@@ -57,11 +57,33 @@
 - 平板/折叠屏大屏适配仅声明 deviceTypes，未做专项布局；
 - 字幕当前站点数据为空，VTT 解析管线已就绪待数据。
 
-## 6. 风险与后续事项
+## 6. 构建验证（GitHub Actions）
 
-1. 本工程**未经 DevEco Studio 实际编译**：个别 API 签名（XComponentController、
-   AVPlayer 事件参数、Refresh 双向绑定）在不同 SDK 小版本可能有差异，编译报错时按
-   官方 API 参考微调即可，工程结构与 Stage 模型规范一致。
+仓库 ches2010/AnyShortHM 已接入 `.github/workflows/build-hap.yml`，使用
+`ghcr.io/dalongzhuazi/harmonyos-ci:api26r`（command-line-tools 26.0.0.821，
+HarmonyOS 26.0.0 / API 26 正式版，SDK 内嵌）在 ubuntu-latest 容器内构建。
+
+- 运行结果：**success**（run #17，commit 4a66ec6，耗时约 1 分 51 秒）
+- 产物：`entry-default-unsigned.hap`，390,281 字节（artifact `hap-unsigned`）
+- 编译期：ERROR 0，WARN 45（全部为 router.pushUrl/back/getParams、
+  promptAction.showToast 的 deprecated 提示，不影响运行）
+
+CI 调试中修复的问题（可供同类工程参考）：
+1. `run:` 内联标量含 `": "` 导致 workflow YAML 解析失败 → 改块标量。
+2. commandline-tools 2.0.0.2（API 9 时代）的 sdkmgr 无 `toolchains:12` 包 → 改用
+   内嵌 SDK 的 API 26 工具链镜像，不再依赖 sdkmgr。
+3. 缺 `hvigor/hvigor-config.json5` → hvigorw 无法启动。
+4. `build-profile.json5` 的 `targets[].applyToDefaultProduct` 被新版 schema 拒绝 → 删除。
+5. `main_pages.json` 放错到 `src/main/profile/` → 必须在 `src/main/resources/base/profile/`。
+6. ArkTS 严格模式：`FontWeight.ExtraBold`/`Text.italic()` 不存在、`DotIndicator` 需 `new`、
+   ForEach 键函数漏 `idx` 参数、`tabIndex`/`position` 与组件基类属性重名需改名、
+   `preferences` 是默认导出、`?？{}` 空对象字面量需显式接口类型、AVPlayer 部分方法
+   返回 void 不能链 `.catch`（改用 ignore() 兼容封装）。
+
+## 7. 风险与后续事项
+
+1. ~~本工程未经 DevEco Studio 实际编译~~ → 已通过 CI 实际编译验证（见上节）；
+   DevEco Studio 本地编译仍建议在真机验证播放与 OAuth 流程。
 2. CDN 视频直链带签名与过期时间（expire_at），过期需重新调用 /play 换取——应用已按
    “每次进入播放页实时获取”实现。
 3. OAuth 登录依赖 accounts.google.com 可达性；国内网络环境可能需要用户自行处理。
