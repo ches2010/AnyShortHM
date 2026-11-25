@@ -70,7 +70,6 @@ jobs:
             echo "::warning::no x86_64 native dir found (already clean?)"
           fi
           echo "removed_dirs=$removed"
-          find . -type d -path '*/oh_modules/*/libs/*' -maxdepth 8 2>/dev/null | head -20
 
       - name: 构建 HAP / Build HAP (debug)
         run: hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon --stacktrace
@@ -110,42 +109,45 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: 清理旧 Release 与 Tag / Drop previous release and tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete "$RELEASE_TAG" --yes --cleanup-tag 2>/dev/null || echo "no existing release for $RELEASE_TAG"
-
       - name: 下载 HAP artifact / Download HAP artifact
         uses: actions/download-artifact@v4
         with:
           name: hap-unsigned
           path: dist
 
-      - name: 创建或更新 Release / Create or update release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: ${{ env.RELEASE_NAME }} (${{ env.RELEASE_TAG }})
-          prerelease: true
-          fail_on_unmatched_files: true
-          files: dist/*.hap
-          body: |
-            ## Beta 1.0.0
+      - name: 发布 Release（GitHub API）/ Publish release via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          TAG="$RELEASE_TAG"
+          REPO="$GH_REPO"
 
-            AnyShort 鸿蒙客户端 Beta 版（IJK / FFmpeg 播放内核）。
+          # 1) 清理同名 release 与 tag（不存在则忽略）
+          gh api -X DELETE "repos/$REPO/releases/tags/$TAG" >/dev/null 2>&1 || true
+          gh api -X DELETE "repos/$REPO/git/refs/tags/$TAG" >/dev/null 2>&1 || true
+          echo "cleaned previous release/tag (if any)"
 
-            ### 本版内容
-            - 首页 / 搜索 / 详情 / 剧集列表
-            - IJK（FFmpeg）播放内核：清晰度切换（保留进度）、倍速、快退快进 10 秒、上/下集、字幕
-            - 全屏按视频方向自适应（竖屏沉浸式 / 横屏旋转）
-            - 收藏 / 观看历史 / 评分 / Google 登录
+          # 2) 创建 release，指向当前提交
+          NOTES=$(printf '## %s\n\nAnyShort 鸿蒙客户端（IJK / FFmpeg 播放内核）。\n\n- 附件为**未签名** HAP，安装前请用 DevEco Studio（自动签名）或 hap-sign-tool 重新签名\n- 设备要求：HarmonyOS NEXT（API 12 及以上）\n- Commit: `%s`\n- 工具链：command-line-tools 26.0.0.821（API 26）\n' "$RELEASE_NAME" "$GITHUB_SHA")
+          RID=$(gh api -X POST "repos/$REPO/releases" \
+            -f tag_name="$TAG" \
+            -f target_commitish="$GITHUB_SHA" \
+            -f name="$RELEASE_NAME ($TAG)" \
+            -F prerelease=true \
+            -f body="$NOTES" \
+            --jq '.id')
+          echo "release id: $RID"
 
-            ### 安装说明
-            附件为 **未签名** HAP，安装前请用 DevEco Studio（自动签名）或 `hap-sign-tool` 重新签名。
+          # 3) 上传 HAP 附件
+          shopt -s nullglob
+          for f in dist/*.hap; do
+            echo "uploading $f"
+            gh api -X POST "https://uploads.github.com/repos/$REPO/releases/$RID/assets?name=$(basename "$f")" \
+              -H "Content-Type: application/octet-stream" \
+              --input "$f" >/dev/null
+          done
 
-            设备要求：HarmonyOS NEXT（API 12 及以上）。
-
-            ### 构建信息
-            - Commit: `${{ github.sha }}`
-            - 工具链：command-line-tools 26.0.0.821（API 26）
+          # 4) 输出 release 地址
+          gh api "repos/$REPO/releases/tags/$TAG" --jq '.html_url'
