@@ -92,7 +92,7 @@ export struct LibraryView {
               this.openDetailById(h.title_id ?? 0, h.name ?? '', h.slug ?? '');
             })
           }
-        }, (h: HistoryItem) => 'h' + (h.title_id ?? 0) + '_' + (h.episode_no ?? 0) + '_' + idx)
+        }, (h: HistoryItem, idx: number) => 'h' + (h.title_id ?? 0) + '_' + (h.episode_no ?? 0) + '_' + idx)
       }
       .width('100%')
       .scrollBar(BarState.Off)
@@ -126,7 +126,7 @@ export struct LibraryView {
               onOpen: (it: TitleItem) => this.openDetailById(it.title_id, it.name, it.slug)
             })
           }
-        }, (item: TitleItem) => 'f' + item.title_id + '_' + idx)
+        }, (item: TitleItem, idx: number) => 'f' + item.title_id + '_' + idx)
       }
       .columnsTemplate('1fr 1fr 1fr')
       .columnsGap(12)
