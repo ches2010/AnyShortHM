@@ -60,8 +60,7 @@ export struct HomeView {
         Span('Short').fontColor(Theme.ACCENT)
       }
       .fontSize(24)
-      .fontWeight(FontWeight.ExtraBold)
-      .italic(true)
+      .fontWeight(FontWeight.Bold)
 
       Blank()
 
@@ -99,7 +98,7 @@ export struct HomeView {
     .autoPlay(true)
     .interval(4500)
     .loop(true)
-    .indicator(DotIndicator().itemWidth(6).itemHeight(6).selectedColor(Theme.ACCENT).color(Theme.TEXT_DIM))
+    .indicator(new DotIndicator().itemWidth(6).itemHeight(6).selectedColor(Theme.ACCENT).color(Theme.TEXT_DIM))
     .margin({ left: 16, right: 16, top: 4 })
   }
 
