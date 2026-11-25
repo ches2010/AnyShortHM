@@ -1,0 +1,16 @@
+{
+  "identifier": "default",
+  "description": "AnyShort 默认能力：HTTP 访问 anyshort API 与视频 CDN",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://anyshort.net/*" },
+        { "url": "https://media1.anyshort.net/*" },
+        { "url": "https://*.tiktokcdn.com/*" }
+      ]
+    }
+  ]
+}

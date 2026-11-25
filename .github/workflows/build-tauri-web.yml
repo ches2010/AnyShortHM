@@ -1,0 +1,58 @@
+name: Build Tauri Web
+
+# 仅验证 Tauri 前端可构建（vite build），产物作为 artifact。
+# 鸿蒙 HAP 需专用工具链，见 tauri/docs/OHOS_BUILD.md
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tauri/**'
+      - '.github/workflows/build-tauri-web.yml'
+  pull_request:
+    paths:
+      - 'tauri/**'
+  workflow_dispatch:
+
+concurrency:
+  group: build-tauri-web-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: tauri
+
+jobs:
+  web:
+    name: 前端构建 / vite build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Type check
+        run: npx vue-tsc --noEmit || echo "::warning::type check reported issues"
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-web-dist
+          path: tauri/dist/
+          if-no-files-found: error
+          retention-days: 14
