@@ -44,7 +44,10 @@ jobs:
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
       - name: Type check
-        run: npx vue-tsc --noEmit || echo "::warning::type check reported issues"
+        run: |
+          set -o pipefail
+          npx vue-tsc --noEmit
+          echo "type check clean"
 
       - name: Build
         run: npm run build
