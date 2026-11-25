@@ -2,10 +2,7 @@
   "apiType": "stageMode",
   "buildOption": {},
   "targets": [
-    {
-      "name": "default",
-      "abiFilters": ["arm64-v8a"]
-    },
+    { "name": "default" },
     { "name": "ohosTest" }
   ]
 }
