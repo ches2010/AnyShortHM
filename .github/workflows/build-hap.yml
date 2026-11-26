@@ -115,7 +115,7 @@ jobs:
           name: hap-unsigned
           path: dist
 
-      - name: 发布 Release（GitHub API）/ Publish release via API
+      - name: 发布 Release（幂等）/ Publish release (idempotent)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -124,23 +124,34 @@ jobs:
           TAG="$RELEASE_TAG"
           REPO="$GH_REPO"
 
-          # 1) 清理同名 release 与 tag（不存在则忽略）
-          gh api -X DELETE "repos/$REPO/releases/tags/$TAG" >/dev/null 2>&1 || true
-          gh api -X DELETE "repos/$REPO/git/refs/tags/$TAG" >/dev/null 2>&1 || true
-          echo "cleaned previous release/tag (if any)"
-
-          # 2) 创建 release，指向当前提交
           NOTES=$(printf '## %s\n\nAnyShort 鸿蒙客户端（IJK / FFmpeg 播放内核）。\n\n- 附件为**未签名** HAP，安装前请用 DevEco Studio（自动签名）或 hap-sign-tool 重新签名\n- 设备要求：HarmonyOS NEXT（API 12 及以上）\n- Commit: `%s`\n- 工具链：command-line-tools 26.0.0.821（API 26）\n' "$RELEASE_NAME" "$GITHUB_SHA")
-          RID=$(gh api -X POST "repos/$REPO/releases" \
-            -f tag_name="$TAG" \
-            -f target_commitish="$GITHUB_SHA" \
-            -f name="$RELEASE_NAME ($TAG)" \
-            -F prerelease=true \
-            -f body="$NOTES" \
-            --jq '.id')
+
+          # 找到同名 release（含 draft），只保留最新的一条；绝不删 git tag
+          RID=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name==\"$TAG\") | .id] | first // empty" || true)
+          if [ -n "$RID" ]; then
+            echo "updating existing release $RID (no tag deletion)"
+            gh api -X PATCH "repos/$REPO/releases/$RID" \
+              -f draft=false -F prerelease=true \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="$RELEASE_NAME ($TAG)" \
+              -f body="$NOTES" >/dev/null
+            # 清掉旧附件，避免同名冲突
+            for aid in $(gh api "repos/$REPO/releases/$RID/assets" --jq '.[].id'); do
+              gh api -X DELETE "repos/$REPO/releases/assets/$aid" >/dev/null
+            done
+          else
+            echo "creating new release"
+            RID=$(gh api -X POST "repos/$REPO/releases" \
+              -f tag_name="$TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="$RELEASE_NAME ($TAG)" \
+              -F prerelease=true \
+              -f body="$NOTES" \
+              --jq '.id')
+          fi
           echo "release id: $RID"
 
-          # 3) 上传 HAP 附件
           shopt -s nullglob
           for f in dist/*.hap; do
             echo "uploading $f"
@@ -149,5 +160,4 @@ jobs:
               --input "$f" >/dev/null
           done
 
-          # 4) 输出 release 地址
-          gh api "repos/$REPO/releases/tags/$TAG" --jq '.html_url'
+          gh api "repos/$REPO/releases/$RID" --jq '.html_url'
