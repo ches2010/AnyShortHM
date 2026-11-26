@@ -69,14 +69,15 @@ jobs:
 
       - name: 构建 HAP (hvigorw)
         run: |
-          set -eu
           if [ -n "${OHOS_PROJECT_DIR:-}" ] && [ -d "$OHOS_PROJECT_DIR" ]; then
             echo "使用外部壳工程: $OHOS_PROJECT_DIR"
           else
-            echo "使用仓库根目录 ArkTS 工程作为壳 (OHOS_PROJECT_DIR=\$PWD/..)"
-            export OHOS_PROJECT_DIR="$PWD/.."
+            SHELL_DIR="$PWD"
+            echo "未指定 OHOS_PROJECT_DIR, 使用仓库根目录 ArkTS 工程作为壳: $SHELL_DIR"
+            export OHOS_PROJECT_DIR="$SHELL_DIR"
           fi
           bash tauri/scripts/build-ohos.sh
+
 
       - name: 产物校验
         run: |
