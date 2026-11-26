@@ -1,6 +1,7 @@
 {
   "src": [
     "pages/Index",
+    "pages/WebShell",
     "pages/DetailPage",
     "pages/PlayerPage",
     "pages/BrowseListPage",

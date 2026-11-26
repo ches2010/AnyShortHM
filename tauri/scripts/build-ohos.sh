@@ -160,6 +160,25 @@ if [ ! -f "$RAWFILE/index.html" ]; then die "前端产物未写入 rawfile"; fi
 COUNT=$(find "$RAWFILE" -type f | wc -l | tr -d " ")
 echo "已注入 dist -> $RAWFILE ($COUNT 个文件)"
 
+# 把壳工程的入口切到 WebView 页（加载我们刚注入的 rawfile/index.html）。
+# 仅当壳里存在 WebShell 页面时切换；原生 ArkTS 构建不会走这个脚本，互不影响。
+ABILITY="$OHOS_DIR/entry/src/main/ets/entryability/EntryAbility.ets"
+if [ -f "$ABILITY" ] && [ -f "$OHOS_DIR/entry/src/main/ets/pages/WebShell.ets" ]; then
+  cp -f "$ABILITY" "$ABILITY.bak"
+  # 任何退出路径都恢复入口，失败也不留脏工作区
+  trap 'if [ -f "$ABILITY.bak" ]; then mv -f "$ABILITY.bak" "$ABILITY"; fi' EXIT
+  python3 - "$ABILITY" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s2 = s.replace("loadContent('pages/Index'", "loadContent('pages/WebShell'")
+if s2 == s:
+    s2 = s.replace('loadContent("pages/Index"', 'loadContent("pages/WebShell"')
+open(p, "w", encoding="utf-8").write(s2)
+print("entry switched to pages/WebShell" if s2 != s else "entry already WebShell or pattern not found")
+PYEOF
+fi
+
 log "4/6 处理签名配置"
 BP="$OHOS_DIR/build-profile.json5"
 if [ ! -f "$BP" ]; then die "缺少 build-profile.json5: $BP"; fi
@@ -225,4 +244,10 @@ fi
 find "$OUT" -type d -name x86_64 -print -exec rm -rf {} + 2>/dev/null || true
 
 ls -lh "$OUT"
+# 恢复壳工程入口（本脚本可能改过 EntryAbility），保持工作区干净
+if [ -f "$ABILITY.bak" ]; then
+  mv -f "$ABILITY.bak" "$ABILITY"
+  echo "EntryAbility restored"
+fi
+
 echo "DONE: $OUT"
